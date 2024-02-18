@@ -16,7 +16,7 @@ def create_mask(src: torch.Tensor, tgt: torch.Tensor, num_heads: int, src_pad_ve
         src_pad_vector: src padding vector. Used for src_padding_mask
         tgt_pad_vector: tgt padding vector. Used for tgt_padding_mask
         device: DEVICE
-    Returns: src, tgt, src padding, tgt padding and memory masks
+    Returns: ORDER IS IMPORTANT RN, src, tgt, memory masks as well as padding masks
     """
     batch_len = src.shape[0]
     src_seq_len = src.shape[1]
@@ -32,16 +32,16 @@ def create_mask(src: torch.Tensor, tgt: torch.Tensor, num_heads: int, src_pad_ve
     tgt_mask = tgt_mask.unsqueeze(0).repeat(batch_len * num_heads, 1, 1)
 
     # Create padding mask (num features, sequence length). True where padding vector
-    src_padding_mask = (src == src_pad_vector.view(1, 1, src_num_features)).all(dim=2)
-    tgt_padding_mask = (tgt == tgt_pad_vector.view(1, 1, tgt_num_features)).all(dim=2)
+    src_padding_mask = (src == src_pad_vector.view(1, 1, src_num_features)).all(dim=2).to(device=device)
+    tgt_padding_mask = (tgt == tgt_pad_vector.view(1, 1, tgt_num_features)).all(dim=2).to(device=device)
 
     # Create memory mask, idk what it does yet so just zeros(mask is irrelevant)? example used same as source
-    memory_mask = torch.zeros((tgt_seq_len, src_seq_len))
+    memory_mask = torch.zeros((tgt_seq_len, src_seq_len), device=device).type(torch.bool)
     memory_padding_mask = src_padding_mask
-    return src_mask, tgt_mask, src_padding_mask, tgt_padding_mask, memory_mask, memory_padding_mask
+    return src_mask, tgt_mask, memory_mask, src_padding_mask, tgt_padding_mask, memory_padding_mask
 
 
-# Copied from pytorch. I am unsure why we are not directly using the embedding by multiplying it with the squareroot
+# Copied from pytorch. I am unsure why we are not directly using the embedding by multiplying it with the squareroot.
 # helper Module to convert tensor of input indices into corresponding tensor of token embeddings.
 class TokenEmbedding(nn.Module):
     def __init__(self, vocab_size: int, emb_size):
@@ -50,7 +50,8 @@ class TokenEmbedding(nn.Module):
         self.emb_size = emb_size
 
     def forward(self, tokens: Tensor):
-        return self.embedding(tokens.long()) * math.sqrt(self.emb_size)
+        # We have to remove the feature dimension because the torch.emb doesn't want it
+        return self.embedding(tokens.squeeze(dim=2)) * math.sqrt(self.emb_size)
 
 
 # Seq2Seq Network
@@ -60,6 +61,7 @@ class Seq2SeqTransformer(nn.Module):
     """
     Note: batch_first = True
     """
+    # TODO: cleanup __init__
     def __init__(self,
                  num_encoder_layers: int,
                  num_decoder_layers: int,
@@ -77,8 +79,8 @@ class Seq2SeqTransformer(nn.Module):
                                           dim_feedforward=dim_feedforward,
                                           dropout=dropout,
                                           batch_first=True)
-        self.tgt_emb = TokenEmbedding(tgt_size,
-                                      src_size)  # here we map from target to source_size/feature size cuz needed for transformer
+        # here we map from target to source_size/feature size cuz needed for transformer
+        self.tgt_emb = TokenEmbedding(tgt_size, src_size)
         self.generator = nn.Linear(src_size, tgt_size)
 
     def forward(self, src: Tensor,
@@ -100,4 +102,4 @@ class Seq2SeqTransformer(nn.Module):
         return self.transformer.encoder(src, src_mask)
 
     def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor):
-        return self.transformer.decoder(tgt, memory, tgt_mask)
+        return self.transformer.decoder(self.tgt_emb(tgt), memory, tgt_mask)

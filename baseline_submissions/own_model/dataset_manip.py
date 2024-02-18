@@ -21,14 +21,15 @@ class MyDataset(IterableDataset):
 
         # separate train src and target data
         tgt_labels = "EW/NS"
-        self.src_df = data.drop(labels=tgt_labels, axis=1)
-        self.tgt_df = data[tgt_labels].astype('category')
+        self.src_df: pd.DataFrame = data.drop(labels=tgt_labels, axis=1)
+        self.tgt_df: pd.Series = data[tgt_labels].astype('category')
 
         # create target dict from string label to integer cuz torch.Tensor needs integers/floats
-        self.tgt_dict = dict(enumerate(self.tgt_df.cat.categories))
+        self.tgt_dict: Dict = dict(enumerate(self.tgt_df.cat.categories))
 
         # convert categorical tgt to numerical tgt, can be translated back with the dicts above
         self.tgt_df = self.tgt_df.cat.codes
+        self.tgt_df = self.tgt_df.astype(dtype='int64')
 
     def __iter__(self):
         num_object_ids = self.first_level_values.size  # how many ObjectIDs?
@@ -52,7 +53,7 @@ class MyDataset(IterableDataset):
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     yield (torch.from_numpy(self.src_df.loc[objectID].values),
-                           torch.from_numpy(self.tgt_df.loc[objectID].values))
+                           torch.from_numpy(self.tgt_df.loc[objectID].values).unsqueeze(1))
 
         return yield_time_series(iter_start, iter_end)
 
@@ -78,16 +79,18 @@ def load_data(data_location: str, label_location: str) -> pd.DataFrame:
         if i == 3:
             break
 
-        datatypes = {"Timestamp": "str", "Eccentricity": "float32", "Semimajor Axis (m)": "float32",
-                     "Inclination (deg)": "float32", "RAAN (deg)": "float32", "Argument of Periapsis (deg)": "float32",
-                     "True Anomaly (deg)": "float32", "Latitude (deg)": "float32", "Longitude (deg)": "float32",
-                     "Altitude (m)": "float32", "X (m)": "float32", "Y (m)": "float32", "Z (m)": "float32",
-                     "Vx (m/s)": "float32", "Vy (m/s)": "float32", "Vz (m/s)": "float32"}
+        float_size = 'float32'
+        datatypes = {"Timestamp": "str", "Eccentricity": float_size, "Semimajor Axis (m)": float_size,
+                     "Inclination (deg)": float_size, "RAAN (deg)": float_size, "Argument of Periapsis (deg)": float_size,
+                     "True Anomaly (deg)": float_size, "Latitude (deg)": float_size, "Longitude (deg)": float_size,
+                     "Altitude (m)": float_size, "X (m)": float_size, "Y (m)": float_size, "Z (m)": float_size,
+                     "Vx (m/s)": float_size, "Vy (m/s)": float_size, "Vz (m/s)": float_size}
         data_df = pd.read_csv(data_file, dtype=datatypes)
         data_df['ObjectID'] = int(data_file.stem)  # csv is named after its objectID/other way round
         data_df['TimeIndex'] = range(len(data_df))
-        data_df['Timestamp'] = pd.to_datetime(data_df['Timestamp'])  # TODO: convert to posix float?
-        data_df.drop(labels='Timestamp', axis=1, inplace=True)  # for now lets just drop it
+        # convert timestamp from str to float
+        data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(float_size)
+        # data_df.drop(labels='Timestamp', axis=1, inplace=True)  # for now lets just drop it
 
         # Add EW and NS nodes to data. They are extracted from the labels and converted to integers
 
@@ -140,7 +143,8 @@ if __name__ == "__main__":
     ds = MyDataset(data_df)
     print(ds.tgt_dict)
     for x, y in ds:
-        print(y)
+        print(x.shape)
+        print(y.shape)
     dl = torch.utils.data.DataLoader(ds, num_workers=0)
 
     # data_df = pd.read_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train/1.csv")
