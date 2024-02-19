@@ -51,7 +51,7 @@ class TokenEmbedding(nn.Module):
 
     def forward(self, tokens: Tensor):
         # We have to remove the feature dimension because the torch.emb doesn't want it
-        return self.embedding(tokens.squeeze(dim=2)) * math.sqrt(self.emb_size)
+        return self.embedding(tokens.squeeze(dim=-1)) * math.sqrt(self.emb_size)
 
 
 # Seq2Seq Network
@@ -59,20 +59,20 @@ class TokenEmbedding(nn.Module):
 # represents one vector. That vector has to be same length as features.
 class Seq2SeqTransformer(nn.Module):
     """
+    Input are just our src features, tgt is the sequence of strings. We have to encode tgt such that one
+    string combination represents one vector. That vector has to be same length as features.
     Note: batch_first = True
     """
-    # TODO: cleanup __init__
     def __init__(self,
                  num_encoder_layers: int,
                  num_decoder_layers: int,
-                 # emb_size: int,  # for now we don't use this and just ust the src_size
                  nhead: int,
-                 src_size: int,
-                 tgt_size: int,
+                 src_size: int,  # this is the 'embedding' size I think?
+                 tgt_size: int,  # number of targets
                  dim_feedforward: int = 512,
                  dropout: float = 0.1):
         super(Seq2SeqTransformer, self).__init__()
-        self.normalisation = nn.LayerNorm(src_size)
+        self.src_normalisation = nn.LayerNorm(src_size)
         self.transformer = nn.Transformer(d_model=src_size,
                                           nhead=nhead,
                                           num_encoder_layers=num_encoder_layers,
@@ -80,7 +80,7 @@ class Seq2SeqTransformer(nn.Module):
                                           dim_feedforward=dim_feedforward,
                                           dropout=dropout,
                                           batch_first=True)
-        # here we map from target to source_size/feature size cuz needed for transformer
+        # here we map from target to source_(feature)size cuz needed for transformer
         self.tgt_emb = TokenEmbedding(tgt_size, src_size)
         self.generator = nn.Linear(src_size, tgt_size)
 
@@ -93,11 +93,15 @@ class Seq2SeqTransformer(nn.Module):
                 tgt_padding_mask: Tensor,
                 memory_padding_mask: Tensor):
 
+        # normalise src and get tgt embedding
+        src = self.src_normalisation(src)
         tgt_emb = self.tgt_emb(tgt)
-        src = self.normalisation(src)
+
+        # actual transformer model
         outs = self.transformer(src, tgt_emb, src_mask, tgt_mask, memory_mask, src_padding_mask,
                                 tgt_padding_mask, memory_padding_mask)
 
+        # output
         return self.generator(outs)
 
     def encode(self, src: Tensor, src_mask: Tensor):
