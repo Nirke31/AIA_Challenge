@@ -170,7 +170,7 @@ FEATURES_AND_TGT = [
 NUM_ENCODER_LAYERS = 3
 NUM_DECODER_LAYERS = 3
 NHEAD = 8
-SRC_SIZE = 16
+SRC_SIZE = 16  # this size has to be divisble by NHEADS or something like that?
 TGT_SIZE = 32
 FF_SIZE = 512
 DROPOUT = 0.1
@@ -181,6 +181,7 @@ EPS = 1e-9
 WEIGHT_DECAY = 0  # For now keep as ADAM, default
 # User settings
 LOAD_MODEL = False
+NUM_CSV_SETS = -1  # -1 = all
 TRAINED_MODEL_PATH = Path('./trained_model/model.pkl')
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
 TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
@@ -188,8 +189,7 @@ TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase
 if __name__ == "__main__":
 
     # get everything
-    num_csv_sets = 10
-    ds_train, ds_test, transformer, loss_fn, optimizer = load_model_and_datasets(num_csv_sets)
+    ds_train, ds_test, transformer, loss_fn, optimizer = load_model_and_datasets(NUM_CSV_SETS)
 
     # train or load
     if LOAD_MODEL:
