@@ -97,7 +97,9 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
 
     if amount < 1:
         # load whole dataset. I pre-safed one already.
-        df = pd.read_csv('./dataset/all_data.csv')
+        df = pd.read_csv('./dataset/all_data.csv', dtype={**datatypes, **{"EW": str, "NS": str, "EW/NS": str}})
+        # in stored dataset the timestamp is already converted to float
+        df['Timestamp'] = df['Timestamp'].astype(float_size)
         df.index = pd.MultiIndex.from_frame(df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
         return df
 
