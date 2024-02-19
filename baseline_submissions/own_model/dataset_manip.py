@@ -30,11 +30,22 @@ class MyDataset(IterableDataset):
         self.src_df: pd.DataFrame = data.drop(labels=tgt_labels, axis=1)
         self.tgt_df: pd.Series = data[tgt_labels].astype('category')
 
-        # create target dict from string label to integer cuz torch.Tensor needs integers/floats
-        self.tgt_dict: Dict = dict(enumerate(self.tgt_df.cat.categories))
+        # translation dicts. generated from the dataset itself
+        self.tgt_dict_int_to_str = {0: 'EW_SS_HK/NS_SS_HK', 1: 'EW_SS_CK/NS_SS_CK', 2: 'EW_SS_EK/NS_SS_CK',
+                                    3: 'EW_SS_CK/NS_SS_NK', 4: 'EW_SS_CK/NS_IK_CK', 5: 'EW_SS_HK/NS_SS_NK',
+                                    6: 'EW_SS_HK/NS_IK_HK', 7: 'EW_SS_NK/NS_SS_NK', 8: 'EW_AD_NK/NS_SS_NK',
+                                    9: 'EW_IK_HK/NS_SS_NK', 10: 'EW_IK_HK/NS_IK_HK', 11: 'EW_IK_HK/NS_IK_CK',
+                                    12: 'EW_IK_CK/NS_SS_NK', 13: 'EW_IK_CK/NS_IK_CK', 14: 'EW_ID_NK/NS_ID_NK',
+                                    15: 'EW_AD_NK/NS_ID_NK', 16: 'EW_IK_HK/NS_ID_NK', 17: 'EW_ID_NK/NS_SS_NK',
+                                    18: 'EW_SS_EK/NS_SS_EK', 19: 'EW_SS_CK/NS_SS_EK', 20: 'EW_SS_EK/NS_SS_NK',
+                                    21: 'EW_SS_EK/NS_IK_EK', 22: 'EW_SS_HK/NS_SS_CK', 23: 'EW_SS_EK/NS_ID_NK',
+                                    24: 'EW_IK_EK/NS_ID_NK', 25: 'EW_IK_EK/NS_IK_EK', 26: 'EW_IK_CK/NS_ID_NK',
+                                    27: 'EW_IK_CK/NS_IK_EK', 28: 'EW_IK_EK/NS_SS_NK', 29: 'EW_IK_EK/NS_IK_CK',
+                                    30: 'EW_SS_CK/NS_ID_NK', 31: 'EW_SS_HK/NS_ID_NK'}
+        self.tgt_dict_str_to_int = {v: k for k, v in self.tgt_dict_int_to_str.items()}
 
         # convert categorical tgt to numerical tgt, can be translated back with the dicts above
-        self.tgt_df = self.tgt_df.cat.codes
+        self.tgt_df = self.tgt_df.map(self.tgt_dict_str_to_int)
         self.tgt_df = self.tgt_df.astype(dtype='int64')
 
     def __iter__(self):
@@ -67,31 +78,37 @@ class MyDataset(IterableDataset):
         return self.first_level_values.size
 
 
-def load_data(data_location: str, label_location: str) -> pd.DataFrame:
-    data_path = Path(data_location).glob('*.csv')
-    label_path = Path(label_location).glob('*.csv')
+def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd.DataFrame:
+    data_path = data_location.glob('*.csv')
+    label_path = label_location.glob('*.csv')
     # Check if data_location is empty
     if not data_path:
         raise ValueError(f'No csv files found in {data_path}')
     if not label_path:
         raise ValueError(f'No csv file found in {label_path}')
 
-    out_df = pd.DataFrame()  # all data
+    float_size = 'float32'
+    datatypes = {"Timestamp": "str", "Eccentricity": float_size, "Semimajor Axis (m)": float_size,
+                 "Inclination (deg)": float_size, "RAAN (deg)": float_size,
+                 "Argument of Periapsis (deg)": float_size,
+                 "True Anomaly (deg)": float_size, "Latitude (deg)": float_size, "Longitude (deg)": float_size,
+                 "Altitude (m)": float_size, "X (m)": float_size, "Y (m)": float_size, "Z (m)": float_size,
+                 "Vx (m/s)": float_size, "Vy (m/s)": float_size, "Vz (m/s)": float_size}
 
+    if amount < 1:
+        # load whole dataset. I pre-safed one already.
+        df = pd.read_csv('./dataset/all_data.csv')
+        df.index = pd.MultiIndex.from_frame(df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
+        return df
+
+    out_df = pd.DataFrame()  # all data
     labels = pd.read_csv(label_location)  # ObjectID,TimeIndex,Direction,Node,Type
 
     # Load out_df
     for i, data_file in enumerate(data_path):
-        if i == 3:
+        if i == amount:
             break
 
-        float_size = 'float32'
-        datatypes = {"Timestamp": "str", "Eccentricity": float_size, "Semimajor Axis (m)": float_size,
-                     "Inclination (deg)": float_size, "RAAN (deg)": float_size,
-                     "Argument of Periapsis (deg)": float_size,
-                     "True Anomaly (deg)": float_size, "Latitude (deg)": float_size, "Longitude (deg)": float_size,
-                     "Altitude (m)": float_size, "X (m)": float_size, "Y (m)": float_size, "Z (m)": float_size,
-                     "Vx (m/s)": float_size, "Vy (m/s)": float_size, "Vz (m/s)": float_size}
         data_df = pd.read_csv(data_file, dtype=datatypes)
         data_df['ObjectID'] = int(data_file.stem)  # csv is named after its objectID/other way round
         data_df['TimeIndex'] = range(len(data_df))
@@ -132,10 +149,22 @@ def load_data(data_location: str, label_location: str) -> pd.DataFrame:
 
     out_df_index = pd.MultiIndex.from_frame(out_df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
     out_df.index = out_df_index
-    out_df.drop(labels=['ObjectID', 'TimeIndex', 'EW', 'NS'], axis=1, inplace=True)
+    # out_df.drop(labels=['ObjectID', 'TimeIndex', 'EW', 'NS'], axis=1, inplace=True)
     out_df.sort_index(inplace=True)
 
     return out_df
+
+
+def split_train_test(data: pd.DataFrame, train_test_ration: float = 0.8) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    # get unique ObjectIDs
+    first_level_values: pd.Series = data.index.get_level_values(0).unique().to_series()
+    train_indices = first_level_values.sample(frac=train_test_ration, random_state=42)
+    test_indices = first_level_values.drop(train_indices.index)
+
+    train = data.loc[train_indices]
+    test = data.loc[test_indices]
+
+    return train, test
 
 
 def convert_tgts_for_eval(pred: torch.Tensor, tgt: torch.Tensor, objectIDs: torch.Tensor,
@@ -214,10 +243,10 @@ if __name__ == "__main__":
     # pd.set_option('display.width', 400)
     # pd.set_option('display.max_columns', None)
 
-    data_df = load_data(train_data_str, train_label_str)
+    data_df = load_data(train_data_str, train_label_str, 3)
 
     ds = MyDataset(data_df)
-    print(ds.tgt_dict)
+    # print(ds.tgt_dict_str_to_int)
 
     dl = torch.utils.data.DataLoader(ds, batch_size=2, num_workers=1)
 
