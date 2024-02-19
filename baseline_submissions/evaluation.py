@@ -12,10 +12,10 @@ class NodeDetectionEvaluator:
         self.ground_truth = ground_truth.copy()
         self.participant = participant.copy()
         self.tolerance = tolerance
-        
+
     def evaluate(self, object_id):
         gt_object = self.ground_truth[(self.ground_truth['ObjectID'] == object_id) & \
-                          (self.ground_truth['Direction'] != 'ES')].copy()
+                                      (self.ground_truth['Direction'] != 'ES')].copy()
         p_object = self.participant[(self.participant['ObjectID'] == object_id) & \
                                     (self.participant['Direction'] != 'ES')].copy()
         p_object['matched'] = False
@@ -31,9 +31,9 @@ class NodeDetectionEvaluator:
             matching_participant_events = p_object[
                 (p_object['TimeIndex'] >= gt_row['TimeIndex'] - self.tolerance) &
                 (p_object['TimeIndex'] <= gt_row['TimeIndex'] + self.tolerance) &
-                (p_object['Direction'] == gt_row['Direction']) & 
+                (p_object['Direction'] == gt_row['Direction']) &
                 (p_object['matched'] == False)
-            ]
+                ]
 
             if len(matching_participant_events) > 0:
                 p_idx = matching_participant_events.index[0]
@@ -55,14 +55,13 @@ class NodeDetectionEvaluator:
             else:
                 fn += 1
                 gt_object.loc[gt_idx, 'classification'] = 'FN'
-                
 
         additional_fp = p_object[~p_object['matched']].copy()
         fp += len(additional_fp)
         p_object.loc[additional_fp.index, 'classification'] = 'FP'
 
         return tp, fp, fn, gt_object, p_object
-    
+
     def score(self, debug=False):
         total_tp = 0
         total_fp = 0
@@ -71,14 +70,14 @@ class NodeDetectionEvaluator:
 
         for object_id in self.ground_truth['ObjectID'].unique():
             _, _, _, gt_object, p_object = self.evaluate(object_id)
-            
+
             total_tp += len(p_object[p_object['classification'] == 'TP'])
             total_fp += len(p_object[p_object['classification'] == 'FP'])
             total_fn += len(gt_object[gt_object['classification'] == 'FN'])
             total_distances.extend(
                 p_object[p_object['classification'] == 'TP']['distance'].tolist()
             )
-        
+
         if debug:
             print(f"Total TPs: {total_tp}")
             print(f"Total FPs: {total_fp}")
@@ -94,7 +93,6 @@ class NodeDetectionEvaluator:
         rmse = np.sqrt((sum(d ** 2 for d in total_distances) / len(total_distances))) if total_distances else 0
 
         return precision, recall, f2, rmse
-
 
     def plot(self, object_id):
         tp, fp, fn, gt_object, p_object = self.evaluate(object_id)
@@ -120,8 +118,7 @@ class NodeDetectionEvaluator:
         plt.legend(handles=legend_elements, loc='lower center', bbox_to_anchor=(0.5, -0.5), ncol=4)
         plt.show()
 
-
-    def _plot_type_timeline(self, ground_truth_type, participant_type, ax, 
+    def _plot_type_timeline(self, ground_truth_type, participant_type, ax,
                             type_label):
         for _, row in ground_truth_type.iterrows():
             label = row['Node'] + '-' + row['Type']
@@ -131,27 +128,27 @@ class NodeDetectionEvaluator:
                              row['TimeIndex'] + self.tolerance, color='grey',
                              alpha=0.2)
             if row['classification'] == 'TP':
-                ax.text(row['TimeIndex'] + self.tolerance + .5, 1.5, 
-                        str(row['distance']), 
+                ax.text(row['TimeIndex'] + self.tolerance + .5, 1.5,
+                        str(row['distance']),
                         color='black')
-                ax.plot([row['TimeIndex'], 
-                         row['TimeIndex'] + row['distance']], [2, 1], 
-                         color='green', linestyle='dashed')
+                ax.plot([row['TimeIndex'],
+                         row['TimeIndex'] + row['distance']], [2, 1],
+                        color='green', linestyle='dashed')
             elif row['classification'] == 'FP':
-                ax.plot([row['TimeIndex'], 
-                         row['TimeIndex'] + row['distance']], [2, 1], 
-                         color='blue', linestyle='dashed')
+                ax.plot([row['TimeIndex'],
+                         row['TimeIndex'] + row['distance']], [2, 1],
+                        color='blue', linestyle='dashed')
             elif row['classification'] == 'FN':
-                ax.plot([row['TimeIndex'], 
-                         row['TimeIndex']], [2, 2.2], color='red', 
-                         linestyle='dashed')
+                ax.plot([row['TimeIndex'],
+                         row['TimeIndex']], [2, 2.2], color='red',
+                        linestyle='dashed')
 
         for _, row in participant_type.iterrows():
             label = row['Node'] + '-' + row['Type']
             ax.scatter(row['TimeIndex'], 1, color='black')
             ax.text(row['TimeIndex'] + 3, 1.05, label, rotation=45)
             if row['classification'] == 'FP' and row['matched'] == False:
-                ax.plot([row['TimeIndex'], row['TimeIndex']], [1, 0.8], 
+                ax.plot([row['TimeIndex'], row['TimeIndex']], [1, 0.8],
                         color='blue', linestyle='dashed')
 
         ax.spines['left'].set_color('none')
@@ -189,16 +186,15 @@ def merge_label_files(label_folder):
 
 
 def run_evaluator(ground_truth_path=None, participant_path=None, plot_object=None):
-
     if participant_path is None:
         participant_df = pd.read_csv('participant_toy.csv')
     else:
         participant_path = Path(participant_path).expanduser()
         if participant_path.is_dir():
-            participant_df = merge_label_files(participant_path)  
+            participant_df = merge_label_files(participant_path)
         else:
             participant_df = pd.read_csv(participant_path)
-    
+
     if ground_truth_path is None:
         ground_truth_df = pd.read_csv('ground_truth_toy.csv')
     else:
@@ -207,13 +203,12 @@ def run_evaluator(ground_truth_path=None, participant_path=None, plot_object=Non
             ground_truth_df = merge_label_files(ground_truth_path)
         else:
             ground_truth_df = pd.read_csv(ground_truth_path)
-    
 
     # Create a NodeDetectionEvaluator instance
-    #print(f'Participant submission filepath: {participant_path}')
-    #print(f'Ground truth filepath: {ground_truth_path}')
-    #print(f'rows in participant: {len(participant_df)}')
-    #print(f'rows in ground truth: {len(ground_truth_df)}')  
+    # print(f'Participant submission filepath: {participant_path}')
+    # print(f'Ground truth filepath: {ground_truth_path}')
+    # print(f'rows in participant: {len(participant_df)}')
+    # print(f'rows in ground truth: {len(ground_truth_df)}')
     evaluator = NodeDetectionEvaluator(ground_truth_df, participant_df, tolerance=6)
     precision, recall, f2, rmse = evaluator.score(debug=True)
     print(f'Precision: {precision:.2f}')
@@ -226,13 +221,14 @@ def run_evaluator(ground_truth_path=None, participant_path=None, plot_object=Non
         evaluator.plot(object_id=plot_object)
     return precision, recall, f2, rmse
 
+
 if __name__ == "__main__":
     if 'ipykernel' in sys.modules:
         run_evaluator(plot_object=True)
     else:
         # Parse the arguments
         parser = argparse.ArgumentParser()
-        parser.add_argument('--participant', type=str, required=False, 
+        parser.add_argument('--participant', type=str, required=False,
                             help='Path to the participant file or folder. \
                                 If a folder is provided, all the CSV files in the \
                                     folder will be used. If none, the toy example \
@@ -241,6 +237,6 @@ if __name__ == "__main__":
                             help='Path to the ground truth file. If none, the toy \
                                 example will be used.')
         parser.add_argument('--plot_object', type=int, required=False,
-                    help='Object ID to plot.')
+                            help='Object ID to plot.')
         args = parser.parse_args()
         run_evaluator(args.ground_truth, args.participant, args.plot_object)

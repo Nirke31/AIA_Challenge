@@ -7,22 +7,19 @@ from timeit import default_timer as timer
 from myModel import Seq2SeqTransformer, create_mask
 from dataset_manip import MyDataset, load_data
 
-torch.autograd.set_detect_anomaly(True)
-torch.backends.cuda.enable_mem_efficient_sdp(False)  # 'False': fixes cuda problem but increases runtime by a gazillion
+# torch.autograd.set_detect_anomaly(True)
+torch.backends.cuda.enable_mem_efficient_sdp(True)
 torch.backends.cuda.enable_math_sdp(True)
 torch.backends.cuda.enable_flash_sdp(True)
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-torch.backends.cuda.sdp_kernel(enable_math=False, enable_flash=False, enable_mem_efficient=False)
-# "enable_math": False, "enable_flash": True, "enable_mem_efficient": False
 
 # https://pytorch.org/tutorials/beginner/translation_transformer.html#seq2seq-network-using-transformer
 # https://pytorch.org/docs/stable/generated/torch.nn.Transformer.html
+# https://github.com/pytorch/pytorch/issues/110213
 
 # TODO: VALUES TO BE DONE, should rely on actul src and tgt size
 SRC_PADDING_VEC = torch.Tensor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
 TGT_PADDING_VEC = torch.Tensor([15])
-
-# https://github.com/pytorch/pytorch/issues/110213
 
 
 def train_epoch(dl: DataLoader, model: torch.nn.Module, optimizer: torch.optim.Optimizer, ):

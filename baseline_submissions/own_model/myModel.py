@@ -72,6 +72,7 @@ class Seq2SeqTransformer(nn.Module):
                  dim_feedforward: int = 512,
                  dropout: float = 0.1):
         super(Seq2SeqTransformer, self).__init__()
+        self.normalisation = nn.LayerNorm(src_size)
         self.transformer = nn.Transformer(d_model=src_size,
                                           nhead=nhead,
                                           num_encoder_layers=num_encoder_layers,
@@ -93,6 +94,7 @@ class Seq2SeqTransformer(nn.Module):
                 memory_padding_mask: Tensor):
 
         tgt_emb = self.tgt_emb(tgt)
+        src = self.normalisation(src)
         outs = self.transformer(src, tgt_emb, src_mask, tgt_mask, memory_mask, src_padding_mask,
                                 tgt_padding_mask, memory_padding_mask)
 
