@@ -1,5 +1,7 @@
 import warnings
 from pathlib import Path
+
+import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 import pandas as pd
@@ -9,6 +11,10 @@ from typing import Tuple, Dict
 
 
 class MyDataset(IterableDataset):
+    '''
+    Together with dataloader returns torch.tensor src and tgt as well as the objectID(s) of the batch
+    '''
+
     def __init__(self, data: pd.DataFrame):
         super(MyDataset).__init__()
         assert data.empty is False, 'Input data is empty'
@@ -53,7 +59,7 @@ class MyDataset(IterableDataset):
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     yield (torch.from_numpy(self.src_df.loc[objectID].values),
-                           torch.from_numpy(self.tgt_df.loc[objectID].values).unsqueeze(1))
+                           torch.from_numpy(self.tgt_df.loc[objectID].values).unsqueeze(1), objectID)
 
         return yield_time_series(iter_start, iter_end)
 
@@ -81,7 +87,8 @@ def load_data(data_location: str, label_location: str) -> pd.DataFrame:
 
         float_size = 'float32'
         datatypes = {"Timestamp": "str", "Eccentricity": float_size, "Semimajor Axis (m)": float_size,
-                     "Inclination (deg)": float_size, "RAAN (deg)": float_size, "Argument of Periapsis (deg)": float_size,
+                     "Inclination (deg)": float_size, "RAAN (deg)": float_size,
+                     "Argument of Periapsis (deg)": float_size,
                      "True Anomaly (deg)": float_size, "Latitude (deg)": float_size, "Longitude (deg)": float_size,
                      "Altitude (m)": float_size, "X (m)": float_size, "Y (m)": float_size, "Z (m)": float_size,
                      "Vx (m/s)": float_size, "Vy (m/s)": float_size, "Vz (m/s)": float_size}
@@ -131,6 +138,75 @@ def load_data(data_location: str, label_location: str) -> pd.DataFrame:
     return out_df
 
 
+def convert_tgts_for_eval(pred: torch.Tensor, tgt: torch.Tensor, objectIDs: torch.Tensor,
+                          tgt_dict: dict) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    # copy input and get on cpu
+    tgt = tgt.numpy(force=True)  # 'most likely' a copy, forced of the GPU to cpu
+    pred = pred.numpy(force=True)
+    objectIDs = objectIDs.numpy(force=True)
+
+    tgt = tgt.squeeze(-1)
+    pred = np.argmax(pred, axis=-1)
+
+    # Iterate over all batches
+    tgt_vals = []
+    pred_vals = []
+    batch: np.ndarray
+    for batch_pred, batch_tgt, objectID in zip(pred, tgt, objectIDs):
+        translate_fnc = np.vectorize(lambda x: tgt_dict[x])
+
+        # translate to strings
+        batch_tgt = translate_fnc(batch_tgt)
+        batch_pred = translate_fnc(batch_pred)
+
+        # iterate over each entry and translate it
+        time_index: int = 0
+        for pred, tgt in zip(batch_pred, batch_tgt):
+            EW_pred, NS_pred = pred.split('/')
+            EW_tgt, NS_tgt = tgt.split('/')
+            EW_pred_direction, EW_pred_node, EW_pred_type = EW_pred.split('_')
+            NS_pred_direction, NS_pred_node, NS_pred_type = NS_pred.split('_')
+            EW_tgt_direction, EW_tgt_node, EW_tgt_type = EW_tgt.split('_')
+            NS_tgt_direction, NS_tgt_node, NS_tgt_type = NS_tgt.split('_')
+
+            # store in list which is later translated to pd.dataframe
+            pred_vals.append((objectID, time_index, EW_pred_direction, EW_pred_node, EW_pred_type))
+            pred_vals.append((objectID, time_index, NS_pred_direction, NS_pred_node, NS_pred_type))
+            tgt_vals.append((objectID, time_index, EW_tgt_direction, EW_tgt_node, EW_tgt_type))
+            tgt_vals.append((objectID, time_index, NS_tgt_direction, NS_tgt_node, NS_tgt_type))
+            time_index += 1
+
+    tgt_df = pd.DataFrame(tgt_vals, columns=['ObjectID', 'TimeIndex', 'Direction', 'Node', 'Type'])
+    pred_df = pd.DataFrame(pred_vals, columns=['ObjectID', 'TimeIndex', 'Direction', 'Node', 'Type'])
+
+    # currently one long dataframe but we only want to have the changes in the dataframe
+    # Sort dataframe based on 'ObjectID', 'Direction' and 'TimeIndex'
+    pred_df.sort_values(['ObjectID', 'Direction', 'TimeIndex'], inplace=True)
+    tgt_df.sort_values(['ObjectID', 'Direction', 'TimeIndex'], inplace=True)
+
+    # Apply the function to each group of rows with the same 'ObjectID' and 'Direction'
+    groups_pred = pred_df.groupby(['ObjectID', 'Direction'])
+    groups_tgt = tgt_df.groupby(['ObjectID', 'Direction'])
+    keep_pred = groups_pred[['Node', 'Type']].apply(lambda group: group.shift() != group).any(axis=1)
+    keep_tgt = groups_tgt[['Node', 'Type']].apply(lambda group: group.shift() != group).any(axis=1)
+
+    # Filter the DataFrame to keep only the rows we're interested in
+    keep_pred.index = pred_df.index
+    pred_df = pred_df[keep_pred]
+    keep_tgt.index = tgt_df.index
+    tgt_df = tgt_df[keep_tgt]
+
+    # Reset the index and reorder the columns
+    pred_df = pred_df[['ObjectID', 'TimeIndex', 'Direction', 'Node', 'Type']]
+    pred_df = pred_df.sort_values(['ObjectID', 'TimeIndex', 'Direction'])
+    pred_df = pred_df.reset_index(drop=True)
+    tgt_df = tgt_df[['ObjectID', 'TimeIndex', 'Direction', 'Node', 'Type']]
+    tgt_df = tgt_df.sort_values(['ObjectID', 'TimeIndex', 'Direction'])
+    tgt_df = tgt_df.reset_index(drop=True)
+
+    return pred_df, tgt_df
+
+
 if __name__ == "__main__":
     train_data_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train"
     train_label_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv"
@@ -142,10 +218,13 @@ if __name__ == "__main__":
 
     ds = MyDataset(data_df)
     print(ds.tgt_dict)
-    for x, y in ds:
+
+    dl = torch.utils.data.DataLoader(ds, batch_size=2, num_workers=1)
+
+    for x, y, ids in dl:
         print(x.shape)
         print(y.shape)
-    dl = torch.utils.data.DataLoader(ds, num_workers=0)
+        print(ids)
 
     # data_df = pd.read_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train/1.csv")
     # data_df['Timestamp'] = pd.to_datetime(data_df['Timestamp'])  # convert to posix float?
