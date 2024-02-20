@@ -157,10 +157,10 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
     return out_df
 
 
-def split_train_test(data: pd.DataFrame, train_test_ration: float = 0.8) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def split_train_test(data: pd.DataFrame, train_test_ration: float = 0.8, random_state: int = 42) -> Tuple[pd.DataFrame, pd.DataFrame]:
     # get unique ObjectIDs
     first_level_values: pd.Series = data.index.get_level_values(0).unique().to_series()
-    train_indices = first_level_values.sample(frac=train_test_ration, random_state=42)
+    train_indices = first_level_values.sample(frac=train_test_ration, random_state=random_state)
     test_indices = first_level_values.drop(train_indices.index)
 
     train = data.loc[train_indices]
