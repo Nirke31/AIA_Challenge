@@ -7,7 +7,7 @@ from torch.utils.data import IterableDataset
 import pandas as pd
 import math
 
-from typing import Tuple, Dict
+from typing import Tuple, Dict, List
 
 
 class MyDataset(IterableDataset):
@@ -107,7 +107,7 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
     labels = pd.read_csv(label_location)  # ObjectID,TimeIndex,Direction,Node,Type
 
     # Load out_df
-    for i, data_file in enumerate(data_path):
+    for i, data_file in enumerate(data_path, start=1):
         if i == amount:
             break
 
@@ -167,6 +167,37 @@ def split_train_test(data: pd.DataFrame, train_test_ration: float = 0.8) -> Tupl
     test = data.loc[test_indices]
 
     return train, test
+
+
+def pad_sequence_vec(src_batch: List[torch.Tensor], padding_vec: torch.Tensor) -> torch.Tensor:
+    """
+    Equivalent to torch.nn.utils.rnn.pad_sequence but with a vector for the source sequence
+    Args:
+        src_batch: List of source tensors
+        padding_vec: tensor of padding vector
+    Returns: torch.Tensor with all sequences. Shape(Batch size, Sequences length (with padded), features size)
+    """
+
+    def insert_padding(seq: torch.Tensor):
+        num_padding = max_len - len(seq)
+        if num_padding == 0:
+            return seq.unsqueeze(0)
+        # else add padding
+        padding_tensor = padding_vec.repeat((num_padding, 1))
+        return torch.cat((seq, padding_tensor), dim=0).unsqueeze(0)
+
+    batch_size = len(src_batch)
+    length = [len(x) for x in src_batch]
+    max_len = max(length)
+    min_len = min(length)
+
+    if max_len != min_len:
+        # do some padding
+        src_batch = torch.cat(list(map(insert_padding, src_batch)), dim=0)
+    else:
+        src_batch = src_batch[0].repeat((batch_size, 1, 1))
+
+    return src_batch
 
 
 def convert_tgts_for_eval(pred: torch.Tensor, tgt: torch.Tensor, objectIDs: torch.Tensor,
