@@ -106,15 +106,14 @@ def train_epoch(dl: DataLoader, model: torch.nn.Module, optimizer: torch.optim.O
         tgt_input = tgt[:, :-1, :]  # batch len, sequence length, feature length
         tgt_expected = tgt[:, 1:, :]
         # mask is tuple, all masks are already pushed to DEVICE
-        tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt_input, NHEAD, SRC_PADDING_VEC,
-                                                                   TGT_PADDING_VEC, DEVICE)
+        masks = create_mask(src, tgt_input, NHEAD, SRC_PADDING_VEC, TGT_PADDING_VEC, DEVICE,
+                            [False, True, False, True, True, False])
 
         src = src.to(DEVICE)
         tgt_input = tgt_input.to(DEVICE)
         tgt_expected = tgt_expected.to(DEVICE)
 
-        pred = model(src, tgt_input, tgt_mask=tgt_mask, src_padding_mask=src_padding_mask,
-                     tgt_padding_mask=tgt_padding_mask)
+        pred = model(src, tgt_input, *masks)
 
         optimizer.zero_grad()
 
@@ -138,7 +137,8 @@ def simple_eval(ds: MyDataset, model: torch.nn.Module):
     tgt_df_all = []
     for src, tgt, objectIds in dl_eval:
         # mask is tuple, all masks are already pushed to DEVICE
-        masks = create_mask(src, tgt, NHEAD, SRC_PADDING_VEC, TGT_PADDING_VEC, DEVICE)
+        masks = create_mask(src, tgt, NHEAD, SRC_PADDING_VEC, TGT_PADDING_VEC, DEVICE,
+                            [False, True, False, True, True, False])
 
         src = src.to(DEVICE)
         tgt = tgt.to(DEVICE)
