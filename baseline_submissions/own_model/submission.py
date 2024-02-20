@@ -1,5 +1,6 @@
 import gc
 import logging
+import time
 import warnings
 from pathlib import Path
 
@@ -36,7 +37,7 @@ torch.backends.cudnn.allow_tf32 = True
 def collate_fn(batch):
     src_batch, tgt_batch, objectID = [], [], []
     for src, tgt, id in batch:
-        src_batch.append(torch.cat((src, SRC_EOS_VEC)))
+        src_batch.append(src)
         tgt_batch.append(torch.cat((torch.tensor([[BOS]]), tgt, torch.tensor([[EOS]]))))
         objectID.append(id)
 
@@ -54,6 +55,7 @@ def load_model_and_datasets(amount: int = 10):
 
     # get Dataset
     train_df, test_df = split_train_test(data, train_test_ration=TRAIN_TEST_RATION, random_state=RANDOM_STATE)
+    test_df = train_df.copy()  # FOR DEBUGGING ONLY
     ds_train = MyDataset(train_df)
     ds_test = MyDataset(test_df)
     print("Own Dataset created")
@@ -89,7 +91,7 @@ def train(ds: MyDataset, transformer: torch.nn.Module, optimizer: torch.optim.Op
         #         train_loss = train_epoch(dl, transformer, optimizer)
         train_loss = train_epoch(dl, transformer, optimizer)
         end_time = timer()
-        print(f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Epoch time = {(end_time - start_time):.3f}s")
+        # print(f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Epoch time = {(end_time - start_time):.3f}s")
         # print(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
         # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
         # prof.export_chrome_trace("trace.json")
@@ -121,8 +123,8 @@ def train_epoch(dl: DataLoader, model: torch.nn.Module, optimizer: torch.optim.O
         tgt_expected = tgt_expected.to(DEVICE)
 
         pred = model(src, tgt_input, *masks)
-
         optimizer.zero_grad()
+        _, asdf = torch.max(pred, dim=-1)
 
         loss = loss_fn(pred.reshape(-1, pred.shape[-1]), tgt_expected.reshape(-1))
         loss.backward()
@@ -148,16 +150,16 @@ def greedy_decode(ds: MyDataset, model: Seq2SeqTransformer):
     for src, tgt, objectIds in dl_eval:
         print(f'\rEvaluation: {i}/{len(dl_eval)}', end='')
         tgt = tgt[:, 1:-1, :]  # remove BOS and EOS tokens
-        src = src[:, :-1, :]
 
         src = src.to(DEVICE)
         src_seq_len = src.size(dim=1)
         src_mask = torch.zeros((1 * NHEAD, src_seq_len, src_seq_len), device=DEVICE).type(torch.bool)
 
         tgt_seq_len = src_seq_len + 1  # BOS + seq len
-        tgt_input = torch.empty((1, tgt_seq_len, 1), dtype=tgt.dtype, device=DEVICE)
-        tgt_input[:, 0, :] = BOS
+        temp = torch.zeros((1, tgt_seq_len, 1), dtype=tgt.dtype, device=DEVICE)
+        tgt_input = temp
         # tgt_input = torch.tensor([[[BOS]]], dtype=torch.long, device=DEVICE)
+        tgt_input[:, 0, :] = BOS
 
         tgt_mask = torch.nn.Transformer.generate_square_subsequent_mask(tgt_seq_len, device=DEVICE)
         tgt_mask = tgt_mask.unsqueeze(0).repeat(1 * NHEAD, 1, 1)
@@ -176,7 +178,7 @@ def greedy_decode(ds: MyDataset, model: Seq2SeqTransformer):
             tgt_input[:, cur_seq_len, :] = next_token
             # tgt_input = torch.cat([tgt_input, torch.ones(1, 1, 1).type_as(tgt_input.data).fill_(next_token)], dim=1)
 
-        # if we iterated throught the whole sequence we have the predicted tgt sequence in tgt input
+        # if we iterated through the whole sequence we have the predicted tgt sequence in tgt input
         # remove BOS token
         tgt_input = tgt_input[:, 1:, :]
         pred_df, tgt_df = convert_tgts_for_eval(tgt_input, tgt, objectIds, tgt_dict)
@@ -186,8 +188,7 @@ def greedy_decode(ds: MyDataset, model: Seq2SeqTransformer):
 
     pred_df = pd.concat(pred_df_all)
     tgt_df = pd.concat(tgt_df_all)
-
-    print("Evaluation complete")
+    print('\n')
 
     pred_df.to_csv(Path("evaluations/pred.csv"), index=False)
     tgt_df.to_csv(Path("evaluations/tgt.csv"), index=False)
@@ -198,11 +199,11 @@ def greedy_decode(ds: MyDataset, model: Seq2SeqTransformer):
 
 
 # Learning settings
-NUM_CSV_SETS = 100  # -1 = all
+NUM_CSV_SETS = 2  # -1 = all
 TRAIN_TEST_RATION = 0.8
-BATCH_SIZE = 5
-NUM_EPOCHS = 100
-SHUFFLE_DATA = True
+BATCH_SIZE = 1
+NUM_EPOCHS = 50
+SHUFFLE_DATA = False
 FEATURES_AND_TGT = [
     "Timestamp",
     "Eccentricity",
@@ -223,11 +224,12 @@ FEATURES_AND_TGT = [
     "EW/NS"
 ]
 # Transformer settings
-NUM_ENCODER_LAYERS = 3
-NUM_DECODER_LAYERS = 3
+NUM_ENCODER_LAYERS = 4
+NUM_DECODER_LAYERS = 4
 NHEAD = 8
 SRC_SIZE = 16  # this size has to be divisble by NHEADS or something like that?
 TGT_SIZE = 35
+EMB_SIZE = 512
 FF_SIZE = 512
 DROPOUT = 0.1
 # Optimizer settings
@@ -252,6 +254,8 @@ SRC_EOS_VEC = torch.ones(1, SRC_SIZE)  # I am unsure if I need this
 TGT_PADDING_NUMBER = 34
 TGT_PADDING_VEC = torch.Tensor([TGT_PADDING_NUMBER])
 
+torch.set_printoptions(profile="full")
+
 if __name__ == "__main__":
     # get everything
     ds_train, ds_test, transformer, loss_fn, optimizer = load_model_and_datasets(NUM_CSV_SETS)
@@ -262,10 +266,14 @@ if __name__ == "__main__":
             transformer.load_state_dict(torch.load(TRAINED_MODEL_PATH))
         else:
             losses = train(ds_train, transformer, optimizer)
-            plt.plot(losses)
-            plt.show(block=False)
+            # plt.plot(losses)
+            # plt.show(block=False)
+            # time.sleep(1)
 
-    print("Evaluation...")
+    # for param in transformer.parameters():
+    #     print(param.max(), param.min())
+
+    print("Evaluation:")
     if LOAD_EVAL:
         tgt = pd.read_csv(Path("evaluations/tgt.csv"))
         pred = pd.read_csv(Path("evaluations/pred.csv"))
@@ -279,4 +287,4 @@ if __name__ == "__main__":
     print(f'F2: {f2:.2f}')
     print(f'RMSE: {rmse:.2f}')
 
-    evaluatinator.plot(object_id=734)
+    evaluatinator.plot(object_id=1335)

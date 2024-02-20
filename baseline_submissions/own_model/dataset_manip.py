@@ -208,7 +208,8 @@ def convert_tgts_for_eval(pred: torch.Tensor, tgt: torch.Tensor, objectIDs: torc
     objectIDs = objectIDs.numpy(force=True)
 
     tgt = tgt.squeeze(-1)
-    pred = np.argmax(pred, axis=-1)
+    pred = pred.squeeze(-1)
+    # pred = np.argmax(pred, axis=-1)
 
     # Iterate over all batches
     tgt_vals = []

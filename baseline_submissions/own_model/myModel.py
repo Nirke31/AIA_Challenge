@@ -61,6 +61,27 @@ def create_mask(src: torch.Tensor, tgt: torch.Tensor, num_heads: int, src_pad_ve
     return src_mask, tgt_mask, memory_mask, src_padding_mask, tgt_padding_mask, memory_padding_mask
 
 
+#  helper Module copied from pytorch tutorial
+class PositionalEncoding(nn.Module):
+    def __init__(self,
+                 emb_size: int,
+                 dropout: float,
+                 maxlen: int = 3000):
+        super(PositionalEncoding, self).__init__()
+        den = torch.exp(- torch.arange(0, emb_size, 2) * math.log(10000) / emb_size)
+        pos = torch.arange(0, maxlen).reshape(maxlen, 1)
+        pos_embedding = torch.zeros((maxlen, emb_size))
+        pos_embedding[:, 0::2] = torch.sin(pos * den)
+        pos_embedding[:, 1::2] = torch.cos(pos * den)
+        pos_embedding = pos_embedding.unsqueeze(-2)
+
+        self.dropout = nn.Dropout(dropout)
+        self.register_buffer('pos_embedding', pos_embedding)
+
+    def forward(self, token_embedding: Tensor):
+        return self.dropout(token_embedding + self.pos_embedding[:token_embedding.size(0), :])
+
+
 # Copied from pytorch. I am unsure why we are not directly using the embedding by multiplying it with the squareroot.
 # helper Module to convert tensor of input indices into corresponding tensor of token embeddings.
 class TokenEmbedding(nn.Module):
@@ -100,9 +121,11 @@ class Seq2SeqTransformer(nn.Module):
                                           num_decoder_layers=num_decoder_layers,
                                           dim_feedforward=dim_feedforward,
                                           dropout=dropout,
-                                          batch_first=True)
+                                          batch_first=True,
+                                          norm_first=True)
         # here we map from target to source_(feature)size cuz needed for transformer
         self.tgt_emb = TokenEmbedding(tgt_size, src_size)
+        self.positional_encoding = PositionalEncoding(src_size, dropout=dropout)
         self.generator = nn.Linear(src_size, tgt_size)
 
     def forward(self, src: Tensor,
@@ -113,19 +136,19 @@ class Seq2SeqTransformer(nn.Module):
                 src_padding_mask: Optional[Tensor] = None,
                 tgt_padding_mask: Optional[Tensor] = None,
                 memory_padding_mask: Optional[Tensor] = None):
-        # normalise src and get tgt embedding
-        src = self.src_normalisation(src)
-        tgt_emb = self.tgt_emb(tgt)
+        # get tgt embedding
+        tgt_emb = self.positional_encoding(self.tgt_emb(tgt))
+        src_emb = self.positional_encoding(src)
 
-        # actual transformer model
-        outs = self.transformer(src, tgt_emb, src_mask, tgt_mask, memory_mask, src_padding_mask,
+        # actual transformer model, transformer does normalisation of inputs.
+        outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, memory_mask, src_padding_mask,
                                 tgt_padding_mask, memory_padding_mask)
 
         # output
         return self.generator(outs)
 
     def encode(self, src: Tensor, src_mask: Tensor):
-        return self.transformer.encoder(src, src_mask)
+        return self.transformer.encoder(self.positional_encoding(src), src_mask)
 
     def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor):
-        return self.transformer.decoder(self.tgt_emb(tgt), memory, tgt_mask)
+        return self.transformer.decoder(self.positional_encoding(self.tgt_emb(tgt)), memory, tgt_mask)
