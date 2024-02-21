@@ -46,3 +46,7 @@ train_label_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/
 #
 # print(test)
 # print(pad_sequence_vec(test, seq_vec))
+
+df = pd.read_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
+df = df.sort_values(by=["ObjectID"])
+print(df[df["ObjectID"] == 20])

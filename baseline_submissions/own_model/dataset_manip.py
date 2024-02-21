@@ -31,6 +31,7 @@ class MyDataset(IterableDataset):
         self.tgt_df: pd.Series = data[tgt_labels].astype('category')
 
         # translation dicts. generated from the dataset itself
+        # str 'PADDING' is used in 'convert_tgts_for_eval()' function so dont rename it!!
         self.tgt_dict_int_to_str = {0: 'EW_SS_HK/NS_SS_HK', 1: 'EW_SS_CK/NS_SS_CK', 2: 'EW_SS_EK/NS_SS_CK',
                                     3: 'EW_SS_CK/NS_SS_NK', 4: 'EW_SS_CK/NS_IK_CK', 5: 'EW_SS_HK/NS_SS_NK',
                                     6: 'EW_SS_HK/NS_IK_HK', 7: 'EW_SS_NK/NS_SS_NK', 8: 'EW_AD_NK/NS_SS_NK',
@@ -41,7 +42,7 @@ class MyDataset(IterableDataset):
                                     21: 'EW_SS_EK/NS_IK_EK', 22: 'EW_SS_HK/NS_SS_CK', 23: 'EW_SS_EK/NS_ID_NK',
                                     24: 'EW_IK_EK/NS_ID_NK', 25: 'EW_IK_EK/NS_IK_EK', 26: 'EW_IK_CK/NS_ID_NK',
                                     27: 'EW_IK_CK/NS_IK_EK', 28: 'EW_IK_EK/NS_SS_NK', 29: 'EW_IK_EK/NS_IK_CK',
-                                    30: 'EW_SS_CK/NS_ID_NK', 31: 'EW_SS_HK/NS_ID_NK'}
+                                    30: 'EW_SS_CK/NS_ID_NK', 31: 'EW_SS_HK/NS_ID_NK', 32: 'PADDING'}
         self.tgt_dict_str_to_int = {v: k for k, v in self.tgt_dict_int_to_str.items()}
 
         # convert categorical tgt to numerical tgt, can be translated back with the dicts above
@@ -157,6 +158,7 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
     return out_df
 
 
+# TODO: TEST IF SPLIT CORRECT
 def split_train_test(data: pd.DataFrame, train_test_ration: float = 0.8, random_state: int = 42) -> Tuple[pd.DataFrame, pd.DataFrame]:
     # get unique ObjectIDs
     first_level_values: pd.Series = data.index.get_level_values(0).unique().to_series()
@@ -202,14 +204,25 @@ def pad_sequence_vec(src_batch: List[torch.Tensor], padding_vec: torch.Tensor) -
 
 def convert_tgts_for_eval(pred: torch.Tensor, tgt: torch.Tensor, objectIDs: torch.Tensor,
                           tgt_dict: dict) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    converts tgt and prediction to dataframes containing only the changes as strings.
+    Args:
+        pred: Tensor, shape ''[batch_size, sequence_len, tgt_feature_size]
+        tgt: Tensor, shape ''[batch_size, sequence_len, 1]
+        objectIDs: Tensor 1D
+        tgt_dict: dict from int to str
+
+    Returns: Two pd.Dataframes containing changes in the sequence in str format
+
+    """
     # copy input and get on cpu
     tgt = tgt.numpy(force=True)  # 'most likely' a copy, forced of the GPU to cpu
     pred = pred.numpy(force=True)
     objectIDs = objectIDs.numpy(force=True)
 
     tgt = tgt.squeeze(-1)
-    pred = pred.squeeze(-1)
-    # pred = np.argmax(pred, axis=-1)
+    # pred = pred.squeeze(-1)
+    pred = np.argmax(pred, axis=-1)
 
     # Iterate over all batches
     tgt_vals = []
@@ -222,11 +235,19 @@ def convert_tgts_for_eval(pred: torch.Tensor, tgt: torch.Tensor, objectIDs: torc
         batch_tgt = translate_fnc(batch_tgt)
         batch_pred = translate_fnc(batch_pred)
 
-        # iterate over each entry and translate it
+        # iterate over sequence and translate each entry from int to str
         time_index: int = 0
-        for pred, tgt in zip(batch_pred, batch_tgt):
-            EW_pred, NS_pred = pred.split('/')
-            EW_tgt, NS_tgt = tgt.split('/')
+        for single_pred, single_tgt in zip(batch_pred, batch_tgt):
+            # stop when we have padding,
+            if single_tgt == 'PADDING':
+                break
+            if single_pred == 'PADDING':
+                # This (hopefully) never happens.
+                raise ValueError("The model predicted PADDING even thought it should not. "
+                                 "This is a problem. Try to retrain?")
+
+            EW_pred, NS_pred = single_pred.split('/')
+            EW_tgt, NS_tgt = single_tgt.split('/')
             EW_pred_direction, EW_pred_node, EW_pred_type = EW_pred.split('_')
             NS_pred_direction, NS_pred_node, NS_pred_type = NS_pred.split('_')
             EW_tgt_direction, EW_tgt_node, EW_tgt_type = EW_tgt.split('_')
@@ -250,7 +271,8 @@ def convert_tgts_for_eval(pred: torch.Tensor, tgt: torch.Tensor, objectIDs: torc
     # Apply the function to each group of rows with the same 'ObjectID' and 'Direction'
     groups_pred = pred_df.groupby(['ObjectID', 'Direction'])
     groups_tgt = tgt_df.groupby(['ObjectID', 'Direction'])
-    keep_pred = groups_pred[['Node', 'Type']].apply(lambda group: group.shift() != group).any(axis=1)
+    test = groups_pred[['Node', 'Type']]
+    keep_pred = test.apply(lambda group: group.shift() != group).any(axis=1)
     keep_tgt = groups_tgt[['Node', 'Type']].apply(lambda group: group.shift() != group).any(axis=1)
 
     # Filter the DataFrame to keep only the rows we're interested in
