@@ -68,7 +68,7 @@ class TransformerINATOR(nn.Module):
         self.pos_encoder = PositionalEncoding(src_size, dropout)
         self.linear_in = nn.Linear(src_size, emb_size)
 
-        encoder_layer = nn.TransformerEncoderLayer(emb_size, nhead, d_hid, dropout, batch_first=batch_first)
+        encoder_layer = nn.TransformerEncoderLayer(emb_size, nhead, d_hid, dropout, batch_first=batch_first, activation="gelu")
         self.encoder = nn.TransformerEncoder(encoder_layer, nlayers)
 
         self.linear_out = nn.Linear(emb_size, tgt_size)

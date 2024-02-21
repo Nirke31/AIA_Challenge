@@ -73,10 +73,10 @@ def load_datasets(train_test_ratio: float, random_state: int, amount: int = 10):
 
 
 # Learning settings
-NUM_CSV_SETS = 50  # -1 = all
+NUM_CSV_SETS = 5  # -1 = all
 TRAIN_TEST_RATIO = 0.8
-BATCH_SIZE = 5
-NUM_EPOCHS = 200
+BATCH_SIZE = 1
+NUM_EPOCHS = 100
 SHUFFLE_DATA = False
 FEATURES_AND_TGT = [
     "Timestamp",
@@ -101,19 +101,19 @@ FEATURES_AND_TGT = [
 NHEAD = 8
 SRC_SIZE = len(FEATURES_AND_TGT) - 1  # Features minus the target (16 for all features)
 TGT_SIZE = 33  # THIS IS BASED ON THE DATASET DICT PLUS ONE PADDING !!!!
-EMB_SIZE = 512  # this size has to be divisble by NHEADS or something like that?
-DIM_HIDDEN = 2048
+EMB_SIZE = 64  # this size has to be divisble by NHEADS or something like that?
+DIM_HIDDEN = 256
 N_LAYERS = 3
 DROPOUT = 0.1
 # Optimizer settings
-LR = 0.0001
+LR = 0.001
 BETAS = (0.9, 0.98)
 EPS = 1e-9
 WEIGHT_DECAY = 0  # For now keep as ADAM, default
 # User settings
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 LOAD_MODEL = False
-LOAD_EVAL = True
+LOAD_EVAL = False
 RANDOM_STATE = 42
 TRAINED_MODEL_NAME = "model.pkl"
 TRAINED_MODEL_PATH = Path('./trained_model/' + TRAINED_MODEL_NAME)
@@ -127,6 +127,7 @@ SRC_PADDING_VEC = torch.zeros(SRC_SIZE)
 if __name__ == "__main__":
     # create everything
     dataset_train, dataset_test = load_datasets(TRAIN_TEST_RATIO, RANDOM_STATE, NUM_CSV_SETS)
+    dataset_test = dataset_test
     dataloader_train = DataLoader(dataset_train, BATCH_SIZE, SHUFFLE_DATA, collate_fn=collate_fn)
     dataloader_test = DataLoader(dataset_test, BATCH_SIZE, SHUFFLE_DATA, collate_fn=collate_fn)
 
@@ -162,4 +163,4 @@ if __name__ == "__main__":
     print(f'F2: {f2:.2f}')
     print(f'RMSE: {rmse:.2f}')
 
-    evaluatinator.plot(object_id=368)
+    evaluatinator.plot(object_id=1335)
