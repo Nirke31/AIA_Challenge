@@ -1,5 +1,7 @@
 import gc
 import logging
+import os
+import sys
 import time
 import warnings
 from pathlib import Path
@@ -17,6 +19,7 @@ from typing import List
 
 from myModel import Seq2SeqTransformer, create_mask
 from dataset_manip import MyDataset, load_data, convert_tgts_for_eval, split_train_test, pad_sequence_vec
+# sys.path.append(os.path.abspath("baseline_submissions"))  # so that vscode findest the NodeDetectionEvaluator
 from baseline_submissions.evaluation import NodeDetectionEvaluator
 
 # torch.autograd.set_detect_anomaly(True)
@@ -28,11 +31,17 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 
+# torch.backends.cudnn.benchmark = True
+
+
 # torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
 
 # https://pytorch.org/tutorials/beginner/translation_transformer.html#seq2seq-network-using-transformer
 # https://pytorch.org/docs/stable/generated/torch.nn.Transformer.html
 # https://github.com/pytorch/pytorch/issues/110213
+# https://pytorch.org/tutorials/recipes/recipes/tuning_guide.html
+# same problem I have?
+
 
 def collate_fn(batch):
     src_batch, tgt_batch, objectID = [], [], []
@@ -55,13 +64,13 @@ def load_model_and_datasets(amount: int = 10):
 
     # get Dataset
     train_df, test_df = split_train_test(data, train_test_ration=TRAIN_TEST_RATION, random_state=RANDOM_STATE)
-    test_df = train_df.copy()  # FOR DEBUGGING ONLY
+    # test_df = train_df.copy()  # FOR DEBUGGING ONLY
     ds_train = MyDataset(train_df)
     ds_test = MyDataset(test_df)
     print("Own Dataset created")
 
     # Create transformer
-    transformer = Seq2SeqTransformer(NUM_ENCODER_LAYERS, NUM_DECODER_LAYERS, NHEAD, SRC_SIZE,
+    transformer = Seq2SeqTransformer(NUM_ENCODER_LAYERS, NUM_DECODER_LAYERS, NHEAD, EMB_SIZE, SRC_SIZE,
                                      TGT_SIZE, FF_SIZE, DROPOUT)
     # idk if I really need this. shouldn't torch do this already?
     for p in transformer.parameters():
@@ -91,7 +100,7 @@ def train(ds: MyDataset, transformer: torch.nn.Module, optimizer: torch.optim.Op
         #         train_loss = train_epoch(dl, transformer, optimizer)
         train_loss = train_epoch(dl, transformer, optimizer)
         end_time = timer()
-        # print(f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Epoch time = {(end_time - start_time):.3f}s")
+        print(f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Epoch time = {(end_time - start_time):.3f}s")
         # print(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
         # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
         # prof.export_chrome_trace("trace.json")
@@ -124,7 +133,7 @@ def train_epoch(dl: DataLoader, model: torch.nn.Module, optimizer: torch.optim.O
 
         pred = model(src, tgt_input, *masks)
         optimizer.zero_grad()
-        _, asdf = torch.max(pred, dim=-1)
+        _, asdf = torch.max(pred, dim=-1)  # debug
 
         loss = loss_fn(pred.reshape(-1, pred.shape[-1]), tgt_expected.reshape(-1))
         loss.backward()
@@ -190,8 +199,8 @@ def greedy_decode(ds: MyDataset, model: Seq2SeqTransformer):
     tgt_df = pd.concat(tgt_df_all)
     print('\n')
 
-    pred_df.to_csv(Path("evaluations/pred.csv"), index=False)
-    tgt_df.to_csv(Path("evaluations/tgt.csv"), index=False)
+    pred_df.to_csv(Path("./evaluations/pred.csv"), index=False)
+    tgt_df.to_csv(Path("./evaluations/tgt.csv"), index=False)
     print("Evaluation stored")
 
     evaluator = NodeDetectionEvaluator(tgt_df, pred_df, 6)
@@ -199,10 +208,10 @@ def greedy_decode(ds: MyDataset, model: Seq2SeqTransformer):
 
 
 # Learning settings
-NUM_CSV_SETS = 2  # -1 = all
+NUM_CSV_SETS = 5  # -1 = all
 TRAIN_TEST_RATION = 0.8
 BATCH_SIZE = 1
-NUM_EPOCHS = 50
+NUM_EPOCHS = 5
 SHUFFLE_DATA = False
 FEATURES_AND_TGT = [
     "Timestamp",
@@ -224,13 +233,13 @@ FEATURES_AND_TGT = [
     "EW/NS"
 ]
 # Transformer settings
-NUM_ENCODER_LAYERS = 4
-NUM_DECODER_LAYERS = 4
+NUM_ENCODER_LAYERS = 3
+NUM_DECODER_LAYERS = 3
 NHEAD = 8
 SRC_SIZE = 16  # this size has to be divisble by NHEADS or something like that?
 TGT_SIZE = 35
-EMB_SIZE = 512
-FF_SIZE = 512
+EMB_SIZE = 64
+FF_SIZE = 256
 DROPOUT = 0.1
 # Optimizer settings
 LR = 0.0001
@@ -243,7 +252,7 @@ LOAD_MODEL = False
 LOAD_EVAL = False
 RANDOM_STATE = 42
 TRAINED_MODEL_NAME = "model.pkl"
-TRAINED_MODEL_PATH = Path('trained_model/' + TRAINED_MODEL_NAME)
+TRAINED_MODEL_PATH = Path('./trained_model/' + TRAINED_MODEL_NAME)
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
 TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
 # Things
@@ -254,7 +263,7 @@ SRC_EOS_VEC = torch.ones(1, SRC_SIZE)  # I am unsure if I need this
 TGT_PADDING_NUMBER = 34
 TGT_PADDING_VEC = torch.Tensor([TGT_PADDING_NUMBER])
 
-torch.set_printoptions(profile="full")
+# torch.set_printoptions(profile="full")
 
 if __name__ == "__main__":
     # get everything

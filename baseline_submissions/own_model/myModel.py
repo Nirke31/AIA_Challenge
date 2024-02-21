@@ -9,8 +9,7 @@ import math
 def create_mask(src: torch.Tensor, tgt: torch.Tensor, num_heads: int, src_pad_vector: torch.Tensor,
                 tgt_pad_vector: torch.Tensor, device: torch.device, which_masks: List[bool]):
     """
-    Creates masks needed for transformer. Transformer docu shows dimensions of masks. Let's just create all mask even
-    if we do not need them.
+    Creates masks needed for transformer. Transformer docu shows dimensions of masks.
     Args:
         src: src data, format: batch size, source sequence, source features
         tgt: tgt data
@@ -87,7 +86,7 @@ class PositionalEncoding(nn.Module):
 class TokenEmbedding(nn.Module):
     def __init__(self, vocab_size: int, emb_size):
         super(TokenEmbedding, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, emb_size, padding_idx=34)  # TODO: GET THIS FROM SOMEWHERE
+        self.embedding = nn.Embedding(vocab_size, emb_size, padding_idx=34)  # TODO: GET PADDING FROM SOMEWHERE
         self.emb_size = emb_size
 
     def forward(self, tokens: Tensor):
@@ -96,8 +95,6 @@ class TokenEmbedding(nn.Module):
 
 
 # Seq2Seq Network
-# input are just our features, tgt is the sequence of strings, we have to encode tgt such that one string combination
-# represents one vector. That vector has to be same length as features.
 class Seq2SeqTransformer(nn.Module):
     """
     Input are just our src features, tgt is the sequence of strings. We have to encode tgt such that one
@@ -109,24 +106,31 @@ class Seq2SeqTransformer(nn.Module):
                  num_encoder_layers: int,
                  num_decoder_layers: int,
                  nhead: int,
+                 emb_size: int,
                  src_size: int,  # this is the 'embedding' size I think?
                  tgt_size: int,  # number of targets
                  dim_feedforward: int = 512,
                  dropout: float = 0.1):
         super(Seq2SeqTransformer, self).__init__()
-        self.src_normalisation = nn.LayerNorm(src_size)
-        self.transformer = nn.Transformer(d_model=src_size,
+
+        # elementise_affine -> learning parameters
+        self.src_normalisation = nn.LayerNorm(src_size, elementwise_affine=True)
+        self.tgt_normalisation = nn.LayerNorm(emb_size, elementwise_affine=True)
+        self.input_gen = nn.Linear(src_size, emb_size)
+        # here we map from target to source_(feature)size cuz needed for transformer
+        self.tgt_emb = TokenEmbedding(tgt_size, emb_size)
+        # positional for src and tgt
+        self.positional_encoding = PositionalEncoding(emb_size, dropout=dropout)
+        # actual transformer
+        self.transformer = nn.Transformer(d_model=emb_size,
                                           nhead=nhead,
                                           num_encoder_layers=num_encoder_layers,
                                           num_decoder_layers=num_decoder_layers,
                                           dim_feedforward=dim_feedforward,
                                           dropout=dropout,
-                                          batch_first=True,
-                                          norm_first=True)
-        # here we map from target to source_(feature)size cuz needed for transformer
-        self.tgt_emb = TokenEmbedding(tgt_size, src_size)
-        self.positional_encoding = PositionalEncoding(src_size, dropout=dropout)
-        self.generator = nn.Linear(src_size, tgt_size)
+                                          batch_first=True)
+        # output
+        self.generator = nn.Linear(emb_size, tgt_size)
 
     def forward(self, src: Tensor,
                 tgt: Tensor,
@@ -136,9 +140,9 @@ class Seq2SeqTransformer(nn.Module):
                 src_padding_mask: Optional[Tensor] = None,
                 tgt_padding_mask: Optional[Tensor] = None,
                 memory_padding_mask: Optional[Tensor] = None):
-        # get tgt embedding
-        tgt_emb = self.positional_encoding(self.tgt_emb(tgt))
-        src_emb = self.positional_encoding(src)
+        # get tgt and src embedding
+        tgt_emb = self.positional_encoding(self.tgt_normalisation(self.tgt_emb(tgt)))
+        src_emb = self.positional_encoding(self.input_gen(self.src_normalisation(src)))
 
         # actual transformer model, transformer does normalisation of inputs.
         outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, memory_mask, src_padding_mask,
@@ -148,7 +152,9 @@ class Seq2SeqTransformer(nn.Module):
         return self.generator(outs)
 
     def encode(self, src: Tensor, src_mask: Tensor):
-        return self.transformer.encoder(self.positional_encoding(src), src_mask)
+        src_emb = self.positional_encoding(self.input_gen(self.src_normalisation(src)))
+        return self.transformer.encoder(src_emb, src_mask)
 
-    def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor):
-        return self.transformer.decoder(self.positional_encoding(self.tgt_emb(tgt)), memory, tgt_mask)
+    def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor, memory_padding_mask: Optional[Tensor] = None):
+        tgt_emb = self.positional_encoding(self.tgt_normalisation(self.tgt_emb(tgt)))
+        return self.transformer.decoder(tgt_emb, memory, tgt_mask, memory_key_padding_mask=memory_padding_mask)
