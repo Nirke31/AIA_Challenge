@@ -76,7 +76,7 @@ def load_datasets(train_test_ratio: float, random_state: int, amount: int = 10):
 NUM_CSV_SETS = 5  # -1 = all
 TRAIN_TEST_RATIO = 0.8
 BATCH_SIZE = 1
-NUM_EPOCHS = 100
+NUM_EPOCHS = 200
 SHUFFLE_DATA = False
 FEATURES_AND_TGT = [
     "Timestamp",
@@ -98,12 +98,12 @@ FEATURES_AND_TGT = [
     "EW/NS"
 ]
 # Transformer settings
-NHEAD = 8
+NHEAD = 16
 SRC_SIZE = len(FEATURES_AND_TGT) - 1  # Features minus the target (16 for all features)
 TGT_SIZE = 33  # THIS IS BASED ON THE DATASET DICT PLUS ONE PADDING !!!!
-EMB_SIZE = 64  # this size has to be divisble by NHEADS or something like that?
-DIM_HIDDEN = 256
-N_LAYERS = 3
+EMB_SIZE = 128  # this size has to be divisble by NHEADS or something like that?
+DIM_HIDDEN = 2048
+N_LAYERS = 2
 DROPOUT = 0.1
 # Optimizer settings
 LR = 0.001
