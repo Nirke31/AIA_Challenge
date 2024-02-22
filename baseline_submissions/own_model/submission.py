@@ -14,11 +14,16 @@ from torch.profiler import profile, record_function, ProfilerActivity
 import torchvision.models as models
 from timeit import default_timer as timer
 import matplotlib.pyplot as plt
-
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from joblib import dump, load
 from typing import List, Tuple
 
+from baseline_submissions.ml_python import utils
 from myModel import TransformerINATOR
-from dataset_manip import MyDataset, load_data, convert_tgts_for_eval, split_train_test, pad_sequence_vec
+from dataset_manip import MyDataset, load_data, convert_tgts_for_eval, split_train_test, pad_sequence_vec, \
+    state_change_eval
 # sys.path.append(os.path.abspath("baseline_submissions"))  # so that vscode findest the NodeDetectionEvaluator
 from baseline_submissions.evaluation import NodeDetectionEvaluator
 
@@ -125,42 +130,112 @@ TGT_PADDING_NBR = 4  # got from MyDataset dict
 SRC_PADDING_VEC = torch.zeros(SRC_SIZE)
 
 if __name__ == "__main__":
-    # create everything
-    dataset_train, dataset_test = load_datasets(TRAIN_TEST_RATIO, RANDOM_STATE, NUM_CSV_SETS)
-    # dataset_test = dataset_train
-    dataloader_train = DataLoader(dataset_train, BATCH_SIZE, SHUFFLE_DATA, collate_fn=collate_fn)
-    dataloader_test = DataLoader(dataset_test, BATCH_SIZE, SHUFFLE_DATA, collate_fn=collate_fn)
+    df = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=-1)
+    print("Dataset loaded")
+    object_ids = df['ObjectID'].unique()
+    train_ids, test_ids = train_test_split(object_ids,
+                                           test_size=1 - TRAIN_TEST_RATIO,
+                                           random_state=RANDOM_STATE)
+    rf = RandomForestClassifier(n_estimators=150, random_state=RANDOM_STATE, n_jobs=5)
+    train_data = df.loc[train_ids]
+    test_data = df.loc[test_ids]
 
-    model = TransformerINATOR(SRC_SIZE, EMB_SIZE, TGT_SIZE, NHEAD, DIM_HIDDEN, N_LAYERS, DROPOUT, True)
-    model.to(DEVICE)
+    TEST = ["Timestamp",
+            "Eccentricity",
+            "Semimajor Axis (m)",
+            "Inclination (deg)",
+            "RAAN (deg)",
+            "Argument of Periapsis (deg)",
+            "True Anomaly (deg)",
+            "Latitude (deg)",
+            "Longitude (deg)",
+            "Altitude (m)",
+            "X (m)",
+            "Y (m)",
+            "Z (m)",
+            "Vx (m/s)",
+            "Vy (m/s)",
+            "Vz (m/s)"]
+    print("Fitting...")
+    start_time = timer()
+    rf.fit(train_data[TEST], train_data["EW"])
+    print(f"Took: {timer() - start_time:.3f} seconds")
+    # Write classifier to disk
+    dump(rf, "state_classifier.joblib")
 
-    loss_fn = torch.nn.CrossEntropyLoss(ignore_index=TGT_PADDING_NBR)
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR, betas=BETAS, eps=EPS, weight_decay=WEIGHT_DECAY)
 
-    # train or load
-    if not LOAD_EVAL:
-        if LOAD_MODEL:
-            model.load_state_dict(torch.load(TRAINED_MODEL_PATH))
-        else:
-            losses = model.do_train(dataloader_train, NUM_EPOCHS, optimizer, loss_fn, SRC_PADDING_VEC,
-                                    DEVICE, True, TRAINED_MODEL_PATH)
-            plt.plot(losses)
-            plt.show(block=True)
-            # time.sleep(1)
+    print("Predicting...")
+    train_data["PREDICTED"] = rf.predict(train_data[TEST])
+    test_data["PREDICTED"] = rf.predict(test_data[TEST])
 
-    print("Evaluation:")
-    if LOAD_EVAL:
-        tgt = pd.read_csv(Path("evaluations/tgt.csv"))
-        pred = pd.read_csv(Path("evaluations/pred.csv"))
-        evaluatinator = NodeDetectionEvaluator(tgt, pred, 6)
-    else:
-        evaluatinator, loss = model.do_test(dataloader_test, loss_fn, SRC_PADDING_VEC, DEVICE)
-        print(f"Loss over all test sequences: {loss}")
-
-    precision, recall, f2, rmse = evaluatinator.score(debug=True)
+    print("TRAIN RESULTS:")
+    total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(train_data["PREDICTED"].to_numpy()), torch.tensor(train_data["EW"].to_numpy()))
+    precision = total_tp / (total_tp + total_fp) \
+        if (total_tp + total_fp) != 0 else 0
+    recall = total_tp / (total_tp + total_fn) \
+        if (total_tp + total_fn) != 0 else 0
+    f2 = (5 * total_tp) / (5 * total_tp + 4 * total_fn + total_fp) \
+        if (5 * total_tp + 4 * total_fn + total_fp) != 0 else 0
+    print(f"Total TPs: {total_tp}")
+    print(f"Total FPs: {total_fp}")
+    print(f"Total FNs: {total_fn}")
+    print(f"Total TNs: {total_tn}")
     print(f'Precision: {precision:.2f}')
     print(f'Recall: {recall:.2f}')
     print(f'F2: {f2:.2f}')
-    print(f'RMSE: {rmse:.2f}')
 
-    evaluatinator.plot(object_id=1335)
+    print("TEST RESULTS:")
+    total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(test_data["PREDICTED"].to_numpy()), torch.tensor(test_data["EW"].to_numpy()))
+    precision = total_tp / (total_tp + total_fp) \
+        if (total_tp + total_fp) != 0 else 0
+    recall = total_tp / (total_tp + total_fn) \
+        if (total_tp + total_fn) != 0 else 0
+    f2 = (5 * total_tp) / (5 * total_tp + 4 * total_fn + total_fp) \
+        if (5 * total_tp + 4 * total_fn + total_fp) != 0 else 0
+    print(f"Total TPs: {total_tp}")
+    print(f"Total FPs: {total_fp}")
+    print(f"Total FNs: {total_fn}")
+    print(f"Total TNs: {total_tn}")
+    print(f'Precision: {precision:.2f}')
+    print(f'Recall: {recall:.2f}')
+    print(f'F2: {f2:.2f}')
+
+    # # create everything
+    # dataset_train, dataset_test = load_datasets(TRAIN_TEST_RATIO, RANDOM_STATE, NUM_CSV_SETS)
+    # # dataset_test = dataset_train
+    # dataloader_train = DataLoader(dataset_train, BATCH_SIZE, SHUFFLE_DATA, collate_fn=collate_fn)
+    # dataloader_test = DataLoader(dataset_test, BATCH_SIZE, SHUFFLE_DATA, collate_fn=collate_fn)
+    #
+    # model = TransformerINATOR(SRC_SIZE, EMB_SIZE, TGT_SIZE, NHEAD, DIM_HIDDEN, N_LAYERS, DROPOUT, True)
+    # model.to(DEVICE)
+    #
+    # loss_fn = torch.nn.CrossEntropyLoss(ignore_index=TGT_PADDING_NBR)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=LR, betas=BETAS, eps=EPS, weight_decay=WEIGHT_DECAY)
+    #
+    # # train or load
+    # if not LOAD_EVAL:
+    #     if LOAD_MODEL:
+    #         model.load_state_dict(torch.load(TRAINED_MODEL_PATH))
+    #     else:
+    #         losses = model.do_train(dataloader_train, NUM_EPOCHS, optimizer, loss_fn, SRC_PADDING_VEC,
+    #                                 DEVICE, True, TRAINED_MODEL_PATH)
+    #         plt.plot(losses)
+    #         plt.show(block=True)
+    #         # time.sleep(1)
+    #
+    # print("Evaluation:")
+    # if LOAD_EVAL:
+    #     tgt = pd.read_csv(Path("evaluations/tgt.csv"))
+    #     pred = pd.read_csv(Path("evaluations/pred.csv"))
+    #     evaluatinator = NodeDetectionEvaluator(tgt, pred, 6)
+    # else:
+    #     evaluatinator, loss = model.do_test(dataloader_test, loss_fn, SRC_PADDING_VEC, DEVICE)
+    #     print(f"Loss over all test sequences: {loss}")
+    #
+    # precision, recall, f2, rmse = evaluatinator.score(debug=True)
+    # print(f'Precision: {precision:.2f}')
+    # print(f'Recall: {recall:.2f}')
+    # print(f'F2: {f2:.2f}')
+    # print(f'RMSE: {rmse:.2f}')
+    #
+    # evaluatinator.plot(object_id=1335)

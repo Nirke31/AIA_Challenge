@@ -11,9 +11,9 @@ from typing import Tuple, Dict, List
 
 
 class MyDataset(IterableDataset):
-    '''
+    """
     Together with dataloader returns torch.tensor src and tgt as well as the objectID(s) of the batch
-    '''
+    """
 
     def __init__(self, data: pd.DataFrame):
         super(MyDataset).__init__()
@@ -28,16 +28,8 @@ class MyDataset(IterableDataset):
         # separate train src and target data
         tgt_labels = ["EW", "NS"]
         self.src_df: pd.DataFrame = data.drop(labels=tgt_labels, axis=1)
-        self.tgt_df: pd.Series = data["EW"].astype('category')
-
-        # translation dicts. generated from the dataset itself
-        # str 'PADDING' is used in 'convert_tgts_for_eval()' function so dont rename it!!
-        self.tgt_dict_int_to_str = {0: "EW_SS", 1: "EW_ID", 2: "EW_AD", 3: "EW_IK", 4: "PADDING"}
-        self.tgt_dict_str_to_int = {v: k for k, v in self.tgt_dict_int_to_str.items()}
-
-        # convert categorical tgt to numerical tgt, can be translated back with the dicts above
-        self.tgt_df = self.tgt_df.map(self.tgt_dict_str_to_int)
-        self.tgt_df = self.tgt_df.astype(dtype='int64')
+        # Lets just look at EW for now
+        self.tgt_df: pd.Series = data[tgt_labels[0]].astype(dtype='float32')
 
     def __iter__(self):
         num_object_ids = self.first_level_values.size  # how many ObjectIDs?
@@ -117,8 +109,9 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         ground_truth_NS = ground_truth_object[ground_truth_object['Direction'] == 'NS'].copy()
 
         # Create 'EW' and 'NS' labels and fill 'unknown' values
-        ground_truth_EW['EW'] = 'EW_' + ground_truth_EW['Node']
-        ground_truth_NS['NS'] = 'NS_' + ground_truth_NS['Node']
+        ground_truth_EW['EW'] = 1.0
+        ground_truth_NS['NS'] = 1.0
+
         ground_truth_EW.drop(['Node', 'Type', 'Direction'], axis=1, inplace=True)
         ground_truth_NS.drop(['Node', 'Type', 'Direction'], axis=1, inplace=True)
 
@@ -132,9 +125,18 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
                                      on=['TimeIndex', 'ObjectID'],
                                      how='left')
 
+        indecies = merged_df[merged_df['EW'] == 1].index
+
+        seq_len = len(data_df)
+        # for idx in indecies:
+        #     puffer = 6
+        #     start = idx - puffer if idx - puffer >= 0 else 0
+        #     end = idx + puffer if idx + puffer <= seq_len else seq_len
+        #     merged_df.loc[start:end, "EW"] = 1
+
         # Fill 'unknown' values in 'EW' and 'NS' columns that come before the first valid observation
-        merged_df['EW'].ffill(inplace=True)
-        merged_df['NS'].ffill(inplace=True)
+        merged_df['EW'].fillna(0.0, inplace=True)
+        merged_df['NS'].fillna(0.0, inplace=True)
 
         out_df = pd.concat([out_df, merged_df])
 
@@ -147,7 +149,8 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
 
 
 # TODO: TEST IF SPLIT CORRECT
-def split_train_test(data: pd.DataFrame, train_test_ration: float = 0.8, random_state: int = 42) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def split_train_test(data: pd.DataFrame, train_test_ration: float = 0.8, random_state: int = 42) -> Tuple[
+    pd.DataFrame, pd.DataFrame]:
     # get unique ObjectIDs
     first_level_values: pd.Series = data.index.get_level_values(0).unique().to_series()
     train_indices = first_level_values.sample(frac=train_test_ration, random_state=random_state)
@@ -234,12 +237,18 @@ def convert_tgts_for_eval(pred: torch.Tensor, tgt: torch.Tensor, objectIDs: torc
                 raise ValueError("The model predicted PADDING even thought it should not. "
                                  "This is a problem. Try to retrain?")
 
-            EW_pred_direction, EW_pred_node = single_pred.split('_')
-            EW_tgt_direction, EW_tgt_node = single_tgt.split('_')
+            EW_pred, NS_pred = single_pred.split('/')
+            EW_tgt, NS_tgt = single_tgt.split('/')
+            EW_pred_direction, EW_pred_node, EW_pred_type = EW_pred.split('_')
+            NS_pred_direction, NS_pred_node, NS_pred_type = NS_pred.split('_')
+            EW_tgt_direction, EW_tgt_node, EW_tgt_type = EW_tgt.split('_')
+            NS_tgt_direction, NS_tgt_node, NS_tgt_type = NS_tgt.split('_')
 
             # store in list which is later translated to pd.dataframe
-            pred_vals.append((objectID, time_index, EW_pred_direction, EW_pred_node, "TEST"))
-            tgt_vals.append((objectID, time_index, EW_tgt_direction, EW_tgt_node, "TEST"))
+            pred_vals.append((objectID, time_index, EW_pred_direction, EW_pred_node, EW_pred_type))
+            pred_vals.append((objectID, time_index, NS_pred_direction, NS_pred_node, NS_pred_type))
+            tgt_vals.append((objectID, time_index, EW_tgt_direction, EW_tgt_node, EW_tgt_type))
+            tgt_vals.append((objectID, time_index, NS_tgt_direction, NS_tgt_node, NS_tgt_type))
             time_index += 1
 
     tgt_df = pd.DataFrame(tgt_vals, columns=['ObjectID', 'TimeIndex', 'Direction', 'Node', 'Type'])
@@ -272,6 +281,27 @@ def convert_tgts_for_eval(pred: torch.Tensor, tgt: torch.Tensor, objectIDs: torc
     tgt_df = tgt_df.reset_index(drop=True)
 
     return pred_df, tgt_df
+
+
+def state_change_eval(pred: torch.Tensor, tgt: torch.Tensor):
+    pred = pred.squeeze()
+    tgt = tgt.squeeze()
+    seq_len = pred.size(dim=0)
+    TP = 0
+    FP = 0
+    TN = 0
+    FN = 0
+    for i in range(seq_len):
+        if pred[i] == tgt[i] == 1:
+            TP += 1
+        elif pred[i] == 1 and tgt[i] == 0:
+            FP += 1
+        elif pred[i] == 0 and tgt[i] == 1:
+            FN += 1
+        elif pred[i] == tgt[i] == 0:
+            TN += 1
+
+    return TP, FP, TN, FN
 
 
 if __name__ == "__main__":
