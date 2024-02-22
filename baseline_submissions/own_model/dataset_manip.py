@@ -26,23 +26,13 @@ class MyDataset(IterableDataset):
         self.first_level_values = data.index.get_level_values(0).unique()
 
         # separate train src and target data
-        tgt_labels = "EW/NS"
+        tgt_labels = ["EW", "NS"]
         self.src_df: pd.DataFrame = data.drop(labels=tgt_labels, axis=1)
-        self.tgt_df: pd.Series = data[tgt_labels].astype('category')
+        self.tgt_df: pd.Series = data["EW"].astype('category')
 
         # translation dicts. generated from the dataset itself
         # str 'PADDING' is used in 'convert_tgts_for_eval()' function so dont rename it!!
-        self.tgt_dict_int_to_str = {0: 'EW_SS_HK/NS_SS_HK', 1: 'EW_SS_CK/NS_SS_CK', 2: 'EW_SS_EK/NS_SS_CK',
-                                    3: 'EW_SS_CK/NS_SS_NK', 4: 'EW_SS_CK/NS_IK_CK', 5: 'EW_SS_HK/NS_SS_NK',
-                                    6: 'EW_SS_HK/NS_IK_HK', 7: 'EW_SS_NK/NS_SS_NK', 8: 'EW_AD_NK/NS_SS_NK',
-                                    9: 'EW_IK_HK/NS_SS_NK', 10: 'EW_IK_HK/NS_IK_HK', 11: 'EW_IK_HK/NS_IK_CK',
-                                    12: 'EW_IK_CK/NS_SS_NK', 13: 'EW_IK_CK/NS_IK_CK', 14: 'EW_ID_NK/NS_ID_NK',
-                                    15: 'EW_AD_NK/NS_ID_NK', 16: 'EW_IK_HK/NS_ID_NK', 17: 'EW_ID_NK/NS_SS_NK',
-                                    18: 'EW_SS_EK/NS_SS_EK', 19: 'EW_SS_CK/NS_SS_EK', 20: 'EW_SS_EK/NS_SS_NK',
-                                    21: 'EW_SS_EK/NS_IK_EK', 22: 'EW_SS_HK/NS_SS_CK', 23: 'EW_SS_EK/NS_ID_NK',
-                                    24: 'EW_IK_EK/NS_ID_NK', 25: 'EW_IK_EK/NS_IK_EK', 26: 'EW_IK_CK/NS_ID_NK',
-                                    27: 'EW_IK_CK/NS_IK_EK', 28: 'EW_IK_EK/NS_SS_NK', 29: 'EW_IK_EK/NS_IK_CK',
-                                    30: 'EW_SS_CK/NS_ID_NK', 31: 'EW_SS_HK/NS_ID_NK', 32: 'PADDING'}
+        self.tgt_dict_int_to_str = {0: "EW_SS", 1: "EW_ID", 2: "EW_AD", 3: "EW_IK", 4: "PADDING"}
         self.tgt_dict_str_to_int = {v: k for k, v in self.tgt_dict_int_to_str.items()}
 
         # convert categorical tgt to numerical tgt, can be translated back with the dicts above
@@ -96,13 +86,13 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
                  "Altitude (m)": float_size, "X (m)": float_size, "Y (m)": float_size, "Z (m)": float_size,
                  "Vx (m/s)": float_size, "Vy (m/s)": float_size, "Vz (m/s)": float_size}
 
-    if amount < 1:
-        # load whole dataset. I pre-safed one already.
-        df = pd.read_csv('./dataset/all_data.csv', dtype={**datatypes, **{"EW": str, "NS": str, "EW/NS": str}})
-        # in stored dataset the timestamp is already converted to float
-        df['Timestamp'] = df['Timestamp'].astype(float_size)
-        df.index = pd.MultiIndex.from_frame(df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
-        return df
+    # if amount < 1:
+    #     # load whole dataset. I pre-safed one already.
+    #     df = pd.read_csv('./dataset/all_data.csv', dtype={**datatypes, **{"EW": str, "NS": str, "EW/NS": str}})
+    #     # in stored dataset the timestamp is already converted to float
+    #     df['Timestamp'] = df['Timestamp'].astype(float_size)
+    #     df.index = pd.MultiIndex.from_frame(df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
+    #     return df
 
     out_df = pd.DataFrame()  # all data
     labels = pd.read_csv(label_location)  # ObjectID,TimeIndex,Direction,Node,Type
@@ -127,8 +117,8 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         ground_truth_NS = ground_truth_object[ground_truth_object['Direction'] == 'NS'].copy()
 
         # Create 'EW' and 'NS' labels and fill 'unknown' values
-        ground_truth_EW['EW'] = 'EW_' + ground_truth_EW['Node'] + '_' + ground_truth_EW['Type']
-        ground_truth_NS['NS'] = 'NS_' + ground_truth_NS['Node'] + '_' + ground_truth_NS['Type']
+        ground_truth_EW['EW'] = 'EW_' + ground_truth_EW['Node']
+        ground_truth_NS['NS'] = 'NS_' + ground_truth_NS['Node']
         ground_truth_EW.drop(['Node', 'Type', 'Direction'], axis=1, inplace=True)
         ground_truth_NS.drop(['Node', 'Type', 'Direction'], axis=1, inplace=True)
 
@@ -145,8 +135,6 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         # Fill 'unknown' values in 'EW' and 'NS' columns that come before the first valid observation
         merged_df['EW'].ffill(inplace=True)
         merged_df['NS'].ffill(inplace=True)
-
-        merged_df['EW/NS'] = merged_df['EW'] + '/' + merged_df['NS']
 
         out_df = pd.concat([out_df, merged_df])
 
@@ -246,18 +234,12 @@ def convert_tgts_for_eval(pred: torch.Tensor, tgt: torch.Tensor, objectIDs: torc
                 raise ValueError("The model predicted PADDING even thought it should not. "
                                  "This is a problem. Try to retrain?")
 
-            EW_pred, NS_pred = single_pred.split('/')
-            EW_tgt, NS_tgt = single_tgt.split('/')
-            EW_pred_direction, EW_pred_node, EW_pred_type = EW_pred.split('_')
-            NS_pred_direction, NS_pred_node, NS_pred_type = NS_pred.split('_')
-            EW_tgt_direction, EW_tgt_node, EW_tgt_type = EW_tgt.split('_')
-            NS_tgt_direction, NS_tgt_node, NS_tgt_type = NS_tgt.split('_')
+            EW_pred_direction, EW_pred_node = single_pred.split('_')
+            EW_tgt_direction, EW_tgt_node = single_tgt.split('_')
 
             # store in list which is later translated to pd.dataframe
-            pred_vals.append((objectID, time_index, EW_pred_direction, EW_pred_node, EW_pred_type))
-            pred_vals.append((objectID, time_index, NS_pred_direction, NS_pred_node, NS_pred_type))
-            tgt_vals.append((objectID, time_index, EW_tgt_direction, EW_tgt_node, EW_tgt_type))
-            tgt_vals.append((objectID, time_index, NS_tgt_direction, NS_tgt_node, NS_tgt_type))
+            pred_vals.append((objectID, time_index, EW_pred_direction, EW_pred_node, "TEST"))
+            tgt_vals.append((objectID, time_index, EW_tgt_direction, EW_tgt_node, "TEST"))
             time_index += 1
 
     tgt_df = pd.DataFrame(tgt_vals, columns=['ObjectID', 'TimeIndex', 'Direction', 'Node', 'Type'])
