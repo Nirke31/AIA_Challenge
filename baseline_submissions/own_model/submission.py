@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pandas as pd
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 from torch.profiler import profile, record_function, ProfilerActivity
@@ -17,7 +19,7 @@ import matplotlib.pyplot as plt
 
 from typing import List, Tuple
 
-from myModel import TransformerINATOR
+from myModel import TransformerINATOR, TimeSeriesCNN
 from dataset_manip import MyDataset, load_data, convert_tgts_for_eval, split_train_test, pad_sequence_vec
 # sys.path.append(os.path.abspath("baseline_submissions"))  # so that vscode findest the NodeDetectionEvaluator
 from baseline_submissions.evaluation import NodeDetectionEvaluator
@@ -72,6 +74,19 @@ def load_datasets(train_test_ratio: float, random_state: int, amount: int = 10):
     return ds_train, ds_test
 
 
+class WeightedBCELoss(nn.Module):
+    def __init__(self, weight=10.0, ignore_index=-1):
+        super().__init__()
+        self.weight = weight
+        self.ignore_index = ignore_index
+
+    def forward(self, predictions, targets):
+        loss = F.binary_cross_entropy(predictions, targets, reduction='none')
+        loss[targets == self.ignore_index] = 0  # Ignore loss for padded values
+        weights = torch.ones_like(targets) + (targets * self.weight)
+        return (loss * weights).mean()
+
+
 # Learning settings
 NUM_CSV_SETS = 5  # -1 = all
 TRAIN_TEST_RATIO = 0.8
@@ -95,12 +110,13 @@ FEATURES_AND_TGT = [
     "Vx (m/s)",
     "Vy (m/s)",
     "Vz (m/s)",
-    "EW/NS"
+    "EW",
+    "NS"
 ]
 # Transformer settings
 NHEAD = 16
-SRC_SIZE = len(FEATURES_AND_TGT) - 1  # Features minus the target (16 for all features)
-TGT_SIZE = 33  # THIS IS BASED ON THE DATASET DICT PLUS ONE PADDING !!!!
+SRC_SIZE = len(FEATURES_AND_TGT) - 2  # Features minus the target (16 for all features)
+TGT_SIZE = 1  # THIS IS BASED ON THE DATASET DICT PLUS ONE PADDING !!!!
 EMB_SIZE = 128  # this size has to be divisble by NHEADS or something like that?
 DIM_HIDDEN = 2048
 N_LAYERS = 2
@@ -123,18 +139,17 @@ TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase
 TGT_PADDING_NBR = 32  # got from MyDataset dict
 SRC_PADDING_VEC = torch.zeros(SRC_SIZE)
 
-
 if __name__ == "__main__":
     # create everything
     dataset_train, dataset_test = load_datasets(TRAIN_TEST_RATIO, RANDOM_STATE, NUM_CSV_SETS)
-    dataset_test = dataset_test
+    dataset_test = dataset_train
     dataloader_train = DataLoader(dataset_train, BATCH_SIZE, SHUFFLE_DATA, collate_fn=collate_fn)
     dataloader_test = DataLoader(dataset_test, BATCH_SIZE, SHUFFLE_DATA, collate_fn=collate_fn)
 
-    model = TransformerINATOR(SRC_SIZE, EMB_SIZE, TGT_SIZE, NHEAD, DIM_HIDDEN, N_LAYERS, DROPOUT, True)
+    model = TimeSeriesCNN(SRC_SIZE)
     model.to(DEVICE)
 
-    loss_fn = torch.nn.CrossEntropyLoss(ignore_index=TGT_PADDING_NBR)
+    loss_fn = WeightedBCELoss(weight=0.0)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, betas=BETAS, eps=EPS, weight_decay=WEIGHT_DECAY)
 
     # train or load
@@ -142,7 +157,7 @@ if __name__ == "__main__":
         if LOAD_MODEL:
             model.load_state_dict(torch.load(TRAINED_MODEL_PATH))
         else:
-            losses = model.do_train(dataloader_train, NUM_EPOCHS, optimizer, loss_fn, SRC_PADDING_VEC,
+            losses = model.do_train(dataloader_train, NUM_EPOCHS, optimizer, loss_fn,
                                     DEVICE, True, TRAINED_MODEL_PATH)
             plt.plot(losses)
             plt.show(block=True)
@@ -154,13 +169,13 @@ if __name__ == "__main__":
         pred = pd.read_csv(Path("evaluations/pred.csv"))
         evaluatinator = NodeDetectionEvaluator(tgt, pred, 6)
     else:
-        evaluatinator, loss = model.do_test(dataloader_test, loss_fn, SRC_PADDING_VEC, DEVICE)
+        loss = model.do_test(dataloader_test, loss_fn, DEVICE)
         print(f"Loss over all test sequences: {loss}")
 
-    precision, recall, f2, rmse = evaluatinator.score(debug=False)
-    print(f'Precision: {precision:.2f}')
-    print(f'Recall: {recall:.2f}')
-    print(f'F2: {f2:.2f}')
-    print(f'RMSE: {rmse:.2f}')
-
-    evaluatinator.plot(object_id=1335)
+    # precision, recall, f2, rmse = evaluatinator.score(debug=False)
+    # print(f'Precision: {precision:.2f}')
+    # print(f'Recall: {recall:.2f}')
+    # print(f'F2: {f2:.2f}')
+    # print(f'RMSE: {rmse:.2f}')
+    #
+    # evaluatinator.plot(object_id=1335)
