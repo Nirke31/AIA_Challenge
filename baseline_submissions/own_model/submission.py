@@ -73,7 +73,7 @@ def load_datasets(train_test_ratio: float, random_state: int, amount: int = 10):
 
 
 # Learning settings
-NUM_CSV_SETS = 5  # -1 = all
+NUM_CSV_SETS = 100  # -1 = all
 TRAIN_TEST_RATIO = 0.8
 BATCH_SIZE = 1
 NUM_EPOCHS = 200
@@ -101,10 +101,10 @@ FEATURES_AND_TGT = [
 NHEAD = 16
 SRC_SIZE = len(FEATURES_AND_TGT) - 1  # Features minus the target (16 for all features)
 TGT_SIZE = 33  # THIS IS BASED ON THE DATASET DICT PLUS ONE PADDING !!!!
-EMB_SIZE = 128  # this size has to be divisble by NHEADS or something like that?
+EMB_SIZE = 256  # this size has to be divisble by NHEADS or something like that?
 DIM_HIDDEN = 2048
 N_LAYERS = 2
-DROPOUT = 0.1
+DROPOUT = 0.2
 # Optimizer settings
 LR = 0.001
 BETAS = (0.9, 0.98)
@@ -127,7 +127,7 @@ SRC_PADDING_VEC = torch.zeros(SRC_SIZE)
 if __name__ == "__main__":
     # create everything
     dataset_train, dataset_test = load_datasets(TRAIN_TEST_RATIO, RANDOM_STATE, NUM_CSV_SETS)
-    dataset_test = dataset_test
+    # dataset_test = dataset_train
     dataloader_train = DataLoader(dataset_train, BATCH_SIZE, SHUFFLE_DATA, collate_fn=collate_fn)
     dataloader_test = DataLoader(dataset_test, BATCH_SIZE, SHUFFLE_DATA, collate_fn=collate_fn)
 
@@ -163,4 +163,4 @@ if __name__ == "__main__":
     print(f'F2: {f2:.2f}')
     print(f'RMSE: {rmse:.2f}')
 
-    evaluatinator.plot(object_id=1335)
+    evaluatinator.plot(object_id=1157)

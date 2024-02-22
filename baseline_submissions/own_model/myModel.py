@@ -6,6 +6,7 @@ import torch
 from torch import Tensor
 from torch.utils.data import DataLoader
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 from timeit import default_timer as timer
 
@@ -64,7 +65,6 @@ class TransformerINATOR(nn.Module):
         super().__init__()
 
         # layer stuff
-        self.normalisation = nn.LayerNorm(src_size, elementwise_affine=True)  # Learning params for now?
         self.pos_encoder = PositionalEncoding(src_size, dropout)
         self.linear_in = nn.Linear(src_size, emb_size)
 
@@ -101,7 +101,7 @@ class TransformerINATOR(nn.Module):
         Returns:
             output tensor of shape ''[batch_size, seq_len, tgt_size]''
         """
-        src = self.linear_in(self.pos_encoder(self.normalisation(src)))
+        src = self.linear_in(self.pos_encoder(F.normalize(src, dim=1)))
         # TUTORIAL HAS THIS. DO I REALLY NEED THIS???? FOR SOURCE IT SHOULDNT MATTER WHAT IT SEES RIGHT????
         # if src_mask is None:
         #     """Generate a square causal mask for the sequence. The masked positions are filled with float('-inf').
