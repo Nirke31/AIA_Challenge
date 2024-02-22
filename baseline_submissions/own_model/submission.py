@@ -73,12 +73,13 @@ def load_datasets(train_test_ratio: float, random_state: int, amount: int = 10):
 
 
 # Learning settings
-NUM_CSV_SETS = 100 # -1 = all
+NUM_CSV_SETS = 20  # -1 = all
 TRAIN_TEST_RATIO = 0.8
 BATCH_SIZE = 1
-NUM_EPOCHS = 200
+NUM_EPOCHS = 100
 SHUFFLE_DATA = False
 FEATURES_AND_TGT = [
+    "Timestamp",
     "Eccentricity",
     "Semimajor Axis (m)",
     "Inclination (deg)",
@@ -93,9 +94,10 @@ FEATURES_AND_TGT = [
     "Z (m)",
     "Vx (m/s)",
     "Vy (m/s)",
+    "Vz (m/s)",
     "EW",
     "NS"
-] # "Timestamp", "Vz (m/s)",
+]
 # Transformer settings
 NHEAD = 8
 SRC_SIZE = len(FEATURES_AND_TGT) - 2  # Features minus the target (16 for all features)
@@ -112,7 +114,7 @@ WEIGHT_DECAY = 0  # For now keep as ADAM, default
 # User settings
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 LOAD_MODEL = False
-LOAD_EVAL = True
+LOAD_EVAL = False
 RANDOM_STATE = 42
 TRAINED_MODEL_NAME = "model.pkl"
 TRAINED_MODEL_PATH = Path('./trained_model/' + TRAINED_MODEL_NAME)
@@ -121,7 +123,6 @@ TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase
 # Padding
 TGT_PADDING_NBR = 4  # got from MyDataset dict
 SRC_PADDING_VEC = torch.zeros(SRC_SIZE)
-
 
 if __name__ == "__main__":
     # create everything
@@ -156,10 +157,10 @@ if __name__ == "__main__":
         evaluatinator, loss = model.do_test(dataloader_test, loss_fn, SRC_PADDING_VEC, DEVICE)
         print(f"Loss over all test sequences: {loss}")
 
-    precision, recall, f2, rmse = evaluatinator.score(debug=False)
+    precision, recall, f2, rmse = evaluatinator.score(debug=True)
     print(f'Precision: {precision:.2f}')
     print(f'Recall: {recall:.2f}')
     print(f'F2: {f2:.2f}')
     print(f'RMSE: {rmse:.2f}')
 
-    evaluatinator.plot(object_id=1348)
+    evaluatinator.plot(object_id=1335)
