@@ -26,28 +26,10 @@ class MyDataset(IterableDataset):
         self.first_level_values = data.index.get_level_values(0).unique()
 
         # separate train src and target data
-        tgt_labels = "EW/NS"
+        tgt_labels = ["EW", "NS"]
         self.src_df: pd.DataFrame = data.drop(labels=tgt_labels, axis=1)
-        self.tgt_df: pd.Series = data[tgt_labels].astype('category')
-
-        # translation dicts. generated from the dataset itself
-        # str 'PADDING' is used in 'convert_tgts_for_eval()' function so dont rename it!!
-        self.tgt_dict_int_to_str = {0: 'EW_SS_HK/NS_SS_HK', 1: 'EW_SS_CK/NS_SS_CK', 2: 'EW_SS_EK/NS_SS_CK',
-                                    3: 'EW_SS_CK/NS_SS_NK', 4: 'EW_SS_CK/NS_IK_CK', 5: 'EW_SS_HK/NS_SS_NK',
-                                    6: 'EW_SS_HK/NS_IK_HK', 7: 'EW_SS_NK/NS_SS_NK', 8: 'EW_AD_NK/NS_SS_NK',
-                                    9: 'EW_IK_HK/NS_SS_NK', 10: 'EW_IK_HK/NS_IK_HK', 11: 'EW_IK_HK/NS_IK_CK',
-                                    12: 'EW_IK_CK/NS_SS_NK', 13: 'EW_IK_CK/NS_IK_CK', 14: 'EW_ID_NK/NS_ID_NK',
-                                    15: 'EW_AD_NK/NS_ID_NK', 16: 'EW_IK_HK/NS_ID_NK', 17: 'EW_ID_NK/NS_SS_NK',
-                                    18: 'EW_SS_EK/NS_SS_EK', 19: 'EW_SS_CK/NS_SS_EK', 20: 'EW_SS_EK/NS_SS_NK',
-                                    21: 'EW_SS_EK/NS_IK_EK', 22: 'EW_SS_HK/NS_SS_CK', 23: 'EW_SS_EK/NS_ID_NK',
-                                    24: 'EW_IK_EK/NS_ID_NK', 25: 'EW_IK_EK/NS_IK_EK', 26: 'EW_IK_CK/NS_ID_NK',
-                                    27: 'EW_IK_CK/NS_IK_EK', 28: 'EW_IK_EK/NS_SS_NK', 29: 'EW_IK_EK/NS_IK_CK',
-                                    30: 'EW_SS_CK/NS_ID_NK', 31: 'EW_SS_HK/NS_ID_NK', 32: 'PADDING'}
-        self.tgt_dict_str_to_int = {v: k for k, v in self.tgt_dict_int_to_str.items()}
-
-        # convert categorical tgt to numerical tgt, can be translated back with the dicts above
-        self.tgt_df = self.tgt_df.map(self.tgt_dict_str_to_int)
-        self.tgt_df = self.tgt_df.astype(dtype='int64')
+        # For now lets just take EW
+        self.tgt_df: pd.Series = data[tgt_labels[0]].astype(dtype='float32')
 
     def __iter__(self):
         num_object_ids = self.first_level_values.size  # how many ObjectIDs?
@@ -127,8 +109,9 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         ground_truth_NS = ground_truth_object[ground_truth_object['Direction'] == 'NS'].copy()
 
         # Create 'EW' and 'NS' labels and fill 'unknown' values
-        ground_truth_EW['EW'] = 'EW_' + ground_truth_EW['Node'] + '_' + ground_truth_EW['Type']
-        ground_truth_NS['NS'] = 'NS_' + ground_truth_NS['Node'] + '_' + ground_truth_NS['Type']
+        ground_truth_EW['EW'] = 1.0
+        ground_truth_NS['NS'] = 1.0
+
         ground_truth_EW.drop(['Node', 'Type', 'Direction'], axis=1, inplace=True)
         ground_truth_NS.drop(['Node', 'Type', 'Direction'], axis=1, inplace=True)
 
@@ -142,11 +125,18 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
                                      on=['TimeIndex', 'ObjectID'],
                                      how='left')
 
-        # Fill 'unknown' values in 'EW' and 'NS' columns that come before the first valid observation
-        merged_df['EW'].ffill(inplace=True)
-        merged_df['NS'].ffill(inplace=True)
+        indecies = merged_df[merged_df['EW'] == 1].index
 
-        merged_df['EW/NS'] = merged_df['EW'] + '/' + merged_df['NS']
+        seq_len = len(data_df)
+        for idx in indecies:
+            puffer = 6
+            start = idx - puffer if idx - puffer >= 0 else 0
+            end = idx + puffer if idx + puffer <= seq_len else seq_len
+            merged_df.loc[start:end, "EW"] = 1
+
+        # Fill 'unknown' values in 'EW' and 'NS' columns that come before the first valid observation
+        merged_df['EW'].fillna(0.0, inplace=True)
+        merged_df['NS'].fillna(0.0, inplace=True)
 
         out_df = pd.concat([out_df, merged_df])
 
@@ -159,7 +149,8 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
 
 
 # TODO: TEST IF SPLIT CORRECT
-def split_train_test(data: pd.DataFrame, train_test_ration: float = 0.8, random_state: int = 42) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def split_train_test(data: pd.DataFrame, train_test_ration: float = 0.8, random_state: int = 42) -> Tuple[
+    pd.DataFrame, pd.DataFrame]:
     # get unique ObjectIDs
     first_level_values: pd.Series = data.index.get_level_values(0).unique().to_series()
     train_indices = first_level_values.sample(frac=train_test_ration, random_state=random_state)
@@ -290,6 +281,29 @@ def convert_tgts_for_eval(pred: torch.Tensor, tgt: torch.Tensor, objectIDs: torc
     tgt_df = tgt_df.reset_index(drop=True)
 
     return pred_df, tgt_df
+
+
+def state_change_eval(pred: torch.Tensor, tgt: torch.Tensor):
+    pred = pred.squeeze()
+    pred[pred < 0.5] = 0
+    pred[pred >= 0.5] = 1
+    tgt = tgt.squeeze()
+    seq_len = pred.size(dim=0)
+    TP = 0
+    FP = 0
+    TN = 0
+    FN = 0
+    for i in range(seq_len):
+        if pred[i] == tgt[i] == 1:
+            TP += 1
+        elif pred[i] == 1 and tgt[i] == 0:
+            FP += 1
+        elif pred[i] == 0 and tgt[i] == 1:
+            FN += 1
+        elif pred[i] == 0 and tgt[i] == 0:
+            TN += 1
+
+    return TP, FP, TN, FN
 
 
 if __name__ == "__main__":
