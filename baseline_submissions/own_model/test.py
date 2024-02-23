@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import torch
 from timeit import default_timer as timer
+
+from matplotlib import pyplot as plt
 from torch import Tensor
 import torch.nn as nn
 from dataset_manip import load_data, split_train_test, pad_sequence_vec
@@ -63,5 +65,40 @@ train_label_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/
 # print(result)
 # result.plot().show()
 # time.sleep(10)
+#
+
+
+# Using FFT not really benefitical it seems like.
+# df = pd.read_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train/178.csv")
+# df['Timestamp'] = (pd.to_datetime(df['Timestamp'])).apply(lambda x: x.timestamp()).astype('float32')
+# # df = df[["Inclination (deg)", "RAAN (deg)", "Argument of Periapsis (deg)", "True Anomaly (deg)", "Latitude (deg)", "Longitude (deg)"]]
+# df = df[["Semimajor Axis (m)", "Altitude (m)"]]
+#
+# # Apply FFT
+# test = df.to_numpy()
+# print(test.shape)
+# fft_result = np.fft.rfft(test, axis=0, norm="ortho")  # Applying FFT along the Sequence length axis
+#
+# # Extract Magnitude and Phase
+# magnitude = np.abs(fft_result)
+# phase = np.angle(fft_result)
+# magnitude[:10, :] = 0
+#
+# # Scaling each feature of the magnitude to a value between 0 and 1
+# min_vals = np.min(magnitude, axis=1, keepdims=True)
+# max_vals = np.max(magnitude, axis=1, keepdims=True)
+# max_vals[min_vals == max_vals] = 1 + min_vals[min_vals == max_vals]
+# scaled_magnitude = (magnitude - min_vals) / (max_vals - min_vals)
+# print(scaled_magnitude.shape)
+# plt.plot(magnitude)
+# plt.show()
+
+# unique node and type combinations for reconstruction from type label
+df = pd.read_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
+df.index = pd.MultiIndex.from_frame(df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
+df = df.drop(["ObjectID", "TimeIndex"], axis=1)
+df_EW = df[df["Direction"] == "EW"]
+df_EW = df_EW.drop_duplicates()
+print(df_EW[df_EW["Node"] != "SS"])
 
 

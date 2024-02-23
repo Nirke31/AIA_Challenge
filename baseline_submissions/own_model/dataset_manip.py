@@ -10,6 +10,84 @@ import math
 from typing import Tuple, Dict, List
 
 
+class GetWindowDataset(IterableDataset):
+    """
+    input data must already have Multiindex (ObjectId, TimeIndex)
+    """
+
+    def __init__(self, data: pd.DataFrame, tgt_index_and_label: pd.DataFrame, window_size: int):
+        super().__init__()
+        assert data.empty is False, 'Input is empty brother'
+        if window_size % 2 != 0:
+            raise warnings.warn("I think odd window sizes is needed. Unknown behaviour maybe?")
+        self.window_size = window_size
+
+        self.data_in = data
+        self.tgt = tgt_index_and_label
+        num_tgts = self.tgt.shape[0]
+        feature_size = self.data_in.shape[-1]
+        # create empty array for storing all window blocks
+        # later in __iter__ we only have to iterate over the src and tgt arrays and return them
+        # src is size [number of tgts, sequence length of window, feature size]
+        self.src = np.empty((num_tgts, self.window_size, feature_size))
+
+        # translation dicts. generated from the dataset itself
+        self.tgt_dict_int_to_str = {0: "NK", 1: "CK", 2: "EK", 3: "HK", 4: "FAKE"}
+        self.tgt_dict_str_to_int = {v: k for k, v in self.tgt_dict_int_to_str.items()}
+
+        # convert categorical tgt to numerical tgt, can be translated back with the dicts above
+        self.tgt["Type"] = self.tgt["Type"].map(self.tgt_dict_str_to_int)
+        self.tgt["Type"] = self.tgt["Type"].astype(dtype='int64')
+
+        # create all window sequences
+        self._prepare_source(self.data_in.shape[-1])
+
+    def _prepare_source(self, feature_size) -> None:
+        for row_idx, row in self.tgt.iterrows():
+            objectID = row["ObjectID"]
+            time_index = row["TimeIndex"]
+            # The sequence length of a specific objectID. Important to not window out of the sequence
+            src_seq_len = self.data_in[objectID].shape[0]
+
+            offset = (self.window_size - 1) / 2
+            start_iter = time_index - offset
+            end_iter = time_index + offset
+            # check out of range
+            if start_iter < 0:
+                # window would go negative. Therefore, move window upward
+                end_iter -= start_iter
+                start_iter = 0
+            elif end_iter >= src_seq_len:
+                # window would go beyond sequence. Therefore, move window down
+                start_iter -= (src_seq_len - end_iter)
+
+            assert (end_iter - start_iter) == self.window_size, "Something wrong"
+
+            # push window into src
+            self.src[row_idx, :, :] = self.data_in[(objectID, start_iter): (objectID, end_iter)].to_numpy()
+        return
+
+    def __iter__(self):
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is not None:
+            raise NotImplementedError("Only works for one worker. Sry")
+
+        def yield_time_series():
+            for row_idx in range(self.tgt.shape[0]):
+                # warning: numpy to tensor problem cuz numpy is not writable but tensor does not support that
+                # -> undefined behaviour on write, but we do not write so its fine (I hope)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    yield (torch.from_numpy(self.src[row_idx, :, :]),
+                           torch.from_numpy(self.tgt.loc[row_idx, "Type"]).unsqueeze(1),
+                           self.tgt.loc[row_idx, "ObjectID"])
+
+        return yield_time_series()
+
+    def __len__(self):
+        return self.tgt.shape[0]
+
+
 class MyDataset(IterableDataset):
     """
     Together with dataloader returns torch.tensor src and tgt as well as the objectID(s) of the batch
@@ -59,6 +137,40 @@ class MyDataset(IterableDataset):
 
     def __len__(self):
         return self.first_level_values.size
+
+
+def load_data_window_ready(data_location: Path, label_location: Path, amount: int = -1) \
+        -> Tuple[pd.DataFrame, pd.DataFrame]:
+    data_path = data_location.glob('*.csv')
+    label_path = label_location.glob('*.csv')
+    out_df = pd.DataFrame()  # all data
+    labels = pd.read_csv(label_location)  # ObjectID,TimeIndex,Direction,Node,Type
+    float_size = 'float32'
+    datatypes = {"Timestamp": "str", "Eccentricity": float_size, "Semimajor Axis (m)": float_size,
+                 "Inclination (deg)": float_size, "RAAN (deg)": float_size,
+                 "Argument of Periapsis (deg)": float_size,
+                 "True Anomaly (deg)": float_size, "Latitude (deg)": float_size, "Longitude (deg)": float_size,
+                 "Altitude (m)": float_size, "X (m)": float_size, "Y (m)": float_size, "Z (m)": float_size,
+                 "Vx (m/s)": float_size, "Vy (m/s)": float_size, "Vz (m/s)": float_size}
+    # Load out_df
+    for i, data_file in enumerate(data_path, start=1):
+        if i == amount:
+            break
+
+        data_df = pd.read_csv(data_file, dtype=datatypes)
+        data_df['ObjectID'] = int(data_file.stem)  # csv is named after its objectID/other way round
+        data_df['TimeIndex'] = range(len(data_df))
+        # convert timestamp from str to float
+        data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(float_size)
+
+        out_df = pd.concat([out_df, data_df])
+
+    out_df_index = pd.MultiIndex.from_frame(out_df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
+    out_df.index = out_df_index
+    out_df.drop(labels=['ObjectID', 'TimeIndex'], axis=1, inplace=True)
+    out_df.sort_index(inplace=True)
+
+    return out_df, labels
 
 
 def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd.DataFrame:
@@ -149,8 +261,8 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
 
 
 # TODO: TEST IF SPLIT CORRECT
-def split_train_test(data: pd.DataFrame, train_test_ration: float = 0.8, random_state: int = 42) -> Tuple[
-    pd.DataFrame, pd.DataFrame]:
+def split_train_test(data: pd.DataFrame, train_test_ration: float = 0.8, random_state: int = 42) \
+        -> Tuple[pd.DataFrame, pd.DataFrame]:
     # get unique ObjectIDs
     first_level_values: pd.Series = data.index.get_level_values(0).unique().to_series()
     train_indices = first_level_values.sample(frac=train_test_ration, random_state=random_state)

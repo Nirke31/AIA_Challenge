@@ -1,11 +1,13 @@
 import gc
 import logging
+import math
 import os
 import sys
 import time
 import warnings
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
@@ -16,14 +18,15 @@ from timeit import default_timer as timer
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.metrics import recall_score, fbeta_score, precision_score, make_scorer
 from joblib import dump, load
 from typing import List, Tuple
 
 from baseline_submissions.ml_python import utils
 from myModel import TransformerINATOR
 from dataset_manip import MyDataset, load_data, convert_tgts_for_eval, split_train_test, pad_sequence_vec, \
-    state_change_eval
+    state_change_eval, load_data_window_ready, GetWindowDataset
 # sys.path.append(os.path.abspath("baseline_submissions"))  # so that vscode findest the NodeDetectionEvaluator
 from baseline_submissions.evaluation import NodeDetectionEvaluator
 
@@ -130,52 +133,103 @@ TGT_PADDING_NBR = 4  # got from MyDataset dict
 SRC_PADDING_VEC = torch.zeros(SRC_SIZE)
 
 if __name__ == "__main__":
-    df = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=-1)
+    # FEATURES = ["Timestamp",
+    #             "Eccentricity",
+    #             "Semimajor Axis (m)",
+    #             "Inclination (deg)",
+    #             "RAAN (deg)",
+    #             "Argument of Periapsis (deg)",
+    #             "True Anomaly (deg)",
+    #             "Latitude (deg)",
+    #             "Longitude (deg)",
+    #             "Altitude (m)",
+    #             "X (m)",
+    #             "Y (m)",
+    #             "Z (m)",
+    #             "Vx (m/s)",
+    #             "Vy (m/s)",
+    #             "Vz (m/s)"]
+    # # FOR FITTING WINDOW MODEL
+    # data, labels = load_data_window_ready(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, NUM_CSV_SETS)
+    # EW_labels = labels[labels["Direction"] == "EW"]
+    # NS_labels = labels[labels["Direction"] == "NS"]
+    # data = data[FEATURES]
+    # # shuffle targets
+    # labels = labels.sample(frac=1)
+    # split_ier = math.floor(labels.shape[0] * TRAIN_TEST_RATIO)
+    # train_labels = labels.iloc[:split_ier]
+    # test_labels = labels.iloc[split_ier:]
+    #
+    #
+    # # test_df = train_df.copy()  # FOR DEBUGGING ONLY
+    # window_size = 11
+    # ds_train = GetWindowDataset(data, train_labels, window_size)
+    # ds_test = GetWindowDataset(data, test_labels, window_size)
+    #
+
+    df = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=50)
     print("Dataset loaded")
     object_ids = df['ObjectID'].unique()
     train_ids, test_ids = train_test_split(object_ids,
                                            test_size=1 - TRAIN_TEST_RATIO,
                                            random_state=RANDOM_STATE)
-    rf = RandomForestClassifier(n_estimators=150, random_state=RANDOM_STATE, n_jobs=5)
+    rf = RandomForestClassifier(n_estimators=150, random_state=RANDOM_STATE, n_jobs=1, class_weight="balanced")
     train_data = df.loc[train_ids]
     test_data = df.loc[test_ids]
 
-    TEST = ["Timestamp",
-            "Eccentricity",
-            "Semimajor Axis (m)",
-            "Inclination (deg)",
-            "RAAN (deg)",
-            "Argument of Periapsis (deg)",
-            "True Anomaly (deg)",
-            "Latitude (deg)",
-            "Longitude (deg)",
-            "Altitude (m)",
-            "X (m)",
-            "Y (m)",
-            "Z (m)",
-            "Vx (m/s)",
-            "Vy (m/s)",
-            "Vz (m/s)"]
+    param_grid = {
+        'n_estimators': [100, 200, 250, 400],
+        'criterion': ['gini', 'entropy']
+    }
+    FEATURES = ["Timestamp",
+                "Eccentricity",
+                "Semimajor Axis (m)",
+                "Inclination (deg)",
+                "RAAN (deg)",
+                "Argument of Periapsis (deg)",
+                "True Anomaly (deg)",
+                "Latitude (deg)",
+                "Longitude (deg)",
+                "Altitude (m)",
+                "X (m)",
+                "Y (m)",
+                "Z (m)",
+                "Vx (m/s)",
+                "Vy (m/s)",
+                "Vz (m/s)"]
+
+    # f2_scorer = make_scorer(fbeta_score, beta=2)
+    # cv_rfc = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5, scoring=f2_scorer,
+    #                       n_jobs=5, verbose=4, refit=False)
+    # start_time = timer()
+    # cv_rfc.fit(df[FEATURES], df["EW"])
+    # print(f"Took: {timer() - start_time:.3f} seconds")
+    # print(cv_rfc.best_params_)
+    # print(cv_rfc.best_score_)
+    # print(cv_rfc.cv_results_)
+
     print("Fitting...")
     start_time = timer()
-    rf.fit(train_data[TEST], train_data["EW"])
+    rf = load("state_classifier_full_job.joblib")
+    # rf.fit(train_data[FEATURES], train_data["EW"])
     print(f"Took: {timer() - start_time:.3f} seconds")
     # Write classifier to disk
     dump(rf, "state_classifier.joblib")
 
-
     print("Predicting...")
-    train_data["PREDICTED"] = rf.predict(train_data[TEST])
-    test_data["PREDICTED"] = rf.predict(test_data[TEST])
+    train_data["PREDICTED"] = rf.predict(train_data[FEATURES])
+    test_data["PREDICTED"] = rf.predict(test_data[FEATURES])
 
     print("TRAIN RESULTS:")
-    total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(train_data["PREDICTED"].to_numpy()), torch.tensor(train_data["EW"].to_numpy()))
+    total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(train_data["PREDICTED"].to_numpy()),
+                                                               torch.tensor(train_data["EW"].to_numpy()))
     precision = total_tp / (total_tp + total_fp) \
         if (total_tp + total_fp) != 0 else 0
     recall = total_tp / (total_tp + total_fn) \
         if (total_tp + total_fn) != 0 else 0
     f2 = (5 * total_tp) / (5 * total_tp + 4 * total_fn + total_fp) \
         if (5 * total_tp + 4 * total_fn + total_fp) != 0 else 0
+
     print(f"Total TPs: {total_tp}")
     print(f"Total FPs: {total_fp}")
     print(f"Total FNs: {total_fn}")
@@ -185,7 +239,8 @@ if __name__ == "__main__":
     print(f'F2: {f2:.2f}')
 
     print("TEST RESULTS:")
-    total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(test_data["PREDICTED"].to_numpy()), torch.tensor(test_data["EW"].to_numpy()))
+    total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(test_data["PREDICTED"].to_numpy()),
+                                                               torch.tensor(test_data["EW"].to_numpy()))
     precision = total_tp / (total_tp + total_fp) \
         if (total_tp + total_fp) != 0 else 0
     recall = total_tp / (total_tp + total_fn) \
@@ -199,6 +254,25 @@ if __name__ == "__main__":
     print(f'Precision: {precision:.2f}')
     print(f'Recall: {recall:.2f}')
     print(f'F2: {f2:.2f}')
+
+    array1 = test_data["PREDICTED"].to_numpy().squeeze()
+    array2 = test_data["EW"].to_numpy().squeeze()
+    # Create an index array
+    index = np.arange(len(array1))
+    # Plotting
+    plt.figure(figsize=(10, 5))  # Adjust the figure size as needed
+    plt.plot(index[array1 == 1], array1[array1 == 1], 'ro', label='Array 1 Ones')  # 'ro' for red circles
+    plt.plot(index[array2 == 1], array2[array2 == 1] - 0.05, 'bs',
+             label='Array 2 Ones')  # 'bs' for blue squares, shifted slightly for visibility
+
+    plt.xlabel('Index')
+    plt.ylabel('Value')
+    plt.title('Comparison of Ones in Two Arrays')
+    plt.yticks([0.6, 1])  # Only show relevant y-ticks
+    plt.legend()
+    plt.grid(True)
+
+    plt.show()
 
     # # create everything
     # dataset_train, dataset_test = load_datasets(TRAIN_TEST_RATIO, RANDOM_STATE, NUM_CSV_SETS)
