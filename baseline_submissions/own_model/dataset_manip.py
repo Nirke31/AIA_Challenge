@@ -18,7 +18,7 @@ class GetWindowDataset(IterableDataset):
     def __init__(self, data: pd.DataFrame, tgt_index_and_label: pd.DataFrame, window_size: int):
         super().__init__()
         assert data.empty is False, 'Input is empty brother'
-        if window_size % 2 != 0:
+        if window_size % 2 == 0:
             raise warnings.warn("I think odd window sizes is needed. Unknown behaviour maybe?")
         self.window_size = window_size
 
@@ -29,25 +29,25 @@ class GetWindowDataset(IterableDataset):
         # create empty array for storing all window blocks
         # later in __iter__ we only have to iterate over the src and tgt arrays and return them
         # src is size [number of tgts, sequence length of window, feature size]
-        self.src = np.empty((num_tgts, self.window_size, feature_size))
+        self.src = np.empty((num_tgts, self.window_size, feature_size), dtype=np.float32)
 
         # translation dicts. generated from the dataset itself
         self.tgt_dict_int_to_str = {0: "NK", 1: "CK", 2: "EK", 3: "HK", 4: "FAKE"}
         self.tgt_dict_str_to_int = {v: k for k, v in self.tgt_dict_int_to_str.items()}
 
         # convert categorical tgt to numerical tgt, can be translated back with the dicts above
-        self.tgt["Type"] = self.tgt["Type"].map(self.tgt_dict_str_to_int)
-        self.tgt["Type"] = self.tgt["Type"].astype(dtype='int64')
+        self.tgt.loc[:, "Type"] = self.tgt.loc[:, "Type"].map(self.tgt_dict_str_to_int)
+        self.tgt.loc[:, "Type"] = self.tgt.loc[:, "Type"].astype(dtype='int64')
 
         # create all window sequences
         self._prepare_source(self.data_in.shape[-1])
 
     def _prepare_source(self, feature_size) -> None:
-        for row_idx, row in self.tgt.iterrows():
+        for i, (row_idx, row) in enumerate(self.tgt.iterrows()):
             objectID = row["ObjectID"]
             time_index = row["TimeIndex"]
             # The sequence length of a specific objectID. Important to not window out of the sequence
-            src_seq_len = self.data_in[objectID].shape[0]
+            src_seq_len = self.data_in.loc[objectID].shape[0]
 
             offset = (self.window_size - 1) / 2
             start_iter = time_index - offset
@@ -61,10 +61,12 @@ class GetWindowDataset(IterableDataset):
                 # window would go beyond sequence. Therefore, move window down
                 start_iter -= (src_seq_len - end_iter)
 
-            assert (end_iter - start_iter) == self.window_size, "Something wrong"
+            # the end_iter is also returned by pandas because it is accessing via index (?!)
+            # my end_iter is therefore one smaller than 'normaly'
+            assert (end_iter - start_iter) == self.window_size - 1, "Something wrong"
 
             # push window into src
-            self.src[row_idx, :, :] = self.data_in[(objectID, start_iter): (objectID, end_iter)].to_numpy()
+            self.src[i, :, :] = self.data_in[(objectID, start_iter): (objectID, end_iter)].to_numpy()
         return
 
     def __iter__(self):
@@ -78,8 +80,10 @@ class GetWindowDataset(IterableDataset):
                 # -> undefined behaviour on write, but we do not write so its fine (I hope)
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
-                    yield (torch.from_numpy(self.src[row_idx, :, :]),
-                           torch.from_numpy(self.tgt.loc[row_idx, "Type"]).unsqueeze(1),
+                    src_array = self.src[row_idx, :, :]
+                    tgt_value_int = self.tgt.loc[row_idx, "Type"]
+                    yield (torch.from_numpy(src_array),
+                           torch.tensor([[tgt_value_int]]),
                            self.tgt.loc[row_idx, "ObjectID"])
 
         return yield_time_series()
@@ -152,23 +156,37 @@ def load_data_window_ready(data_location: Path, label_location: Path, amount: in
                  "True Anomaly (deg)": float_size, "Latitude (deg)": float_size, "Longitude (deg)": float_size,
                  "Altitude (m)": float_size, "X (m)": float_size, "Y (m)": float_size, "Z (m)": float_size,
                  "Vx (m/s)": float_size, "Vy (m/s)": float_size, "Vz (m/s)": float_size}
+
+    loaded_objectIDs = []
+
     # Load out_df
-    for i, data_file in enumerate(data_path, start=1):
+    for i, data_file in enumerate(data_path):
         if i == amount:
             break
 
         data_df = pd.read_csv(data_file, dtype=datatypes)
-        data_df['ObjectID'] = int(data_file.stem)  # csv is named after its objectID/other way round
+        object_id = int(data_file.stem)  # csv is named after its objectID/other way round
+        data_df['ObjectID'] = object_id
         data_df['TimeIndex'] = range(len(data_df))
         # convert timestamp from str to float
         data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(float_size)
 
         out_df = pd.concat([out_df, data_df])
+        # append to later just drop all tgts that habe not been loaded
+        loaded_objectIDs.append(object_id)
 
     out_df_index = pd.MultiIndex.from_frame(out_df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
     out_df.index = out_df_index
     out_df.drop(labels=['ObjectID', 'TimeIndex'], axis=1, inplace=True)
     out_df.sort_index(inplace=True)
+
+    # drop end of study targets as we do not have to predict those
+    labels = labels[labels['Type'] != 'ES']
+    # drop labels at first position. ATM for testing. Later probably use own classifier for predicting them?
+    labels = labels[labels['TimeIndex'] != 0]
+    # if we only load a few csv's, then just load the targets of the loaded objectIDs
+    labels = labels[labels['ObjectID'].isin(loaded_objectIDs)]
+    labels.reset_index(drop=True, inplace=True)
 
     return out_df, labels
 

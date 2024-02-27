@@ -96,9 +96,9 @@ train_label_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/
 # unique node and type combinations for reconstruction from type label
 df = pd.read_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
 df.index = pd.MultiIndex.from_frame(df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
-df = df.drop(["ObjectID", "TimeIndex"], axis=1)
+# df = df.drop(["ObjectID", "TimeIndex"], axis=1)
 df_EW = df[df["Direction"] == "EW"]
-df_EW = df_EW.drop_duplicates()
-print(df_EW[df_EW["Node"] != "SS"])
+# df_EW = df_EW.drop_duplicates()
+print(df_EW[df_EW["Type"] == "NK"])  # 'Node' != SS
 
 

@@ -60,19 +60,19 @@ class PositionalEncoding(nn.Module):
 
 
 class TransformerINATOR(nn.Module):
-    def __init__(self, src_size: int, emb_size: int, tgt_size: int, nhead: int, d_hid: int = 2048, nlayers: int = 2,
-                 dropout: float = 0.5, batch_first: bool = True):
+    def __init__(self, src_size: int, emb_size: int, tgt_size: int, nhead: int, window_size: int,
+                 d_hid: int = 2048, nlayers: int = 2, dropout: float = 0.5, batch_first: bool = True):
         super().__init__()
 
         # layer stuff
-        self.normalisation = nn.LayerNorm(src_size, elementwise_affine=True)  # Learning params for now?
-        self.pos_encoder = PositionalEncoding(src_size, dropout)
+        self.pos_encoder = PositionalEncoding(src_size, dropout, max_len=window_size)
         self.linear_in = nn.Linear(src_size, emb_size)
 
-        encoder_layer = nn.TransformerEncoderLayer(emb_size, nhead, d_hid, dropout, batch_first=batch_first, activation="gelu")
+        encoder_layer = nn.TransformerEncoderLayer(emb_size, nhead, d_hid, dropout, batch_first=batch_first,
+                                                   activation="gelu")
         self.encoder = nn.TransformerEncoder(encoder_layer, nlayers)
 
-        self.linear_out = nn.Linear(emb_size, tgt_size)
+        self.linear_out = nn.Linear(emb_size * window_size, tgt_size)
 
         self.init_weights()
 
@@ -102,7 +102,7 @@ class TransformerINATOR(nn.Module):
         Returns:
             output tensor of shape ''[batch_size, seq_len, tgt_size]''
         """
-        src = self.linear_in(self.pos_encoder(F.normalize(src)))
+        src = self.linear_in(self.pos_encoder(src))
         # TUTORIAL HAS THIS. DO I REALLY NEED THIS???? FOR SOURCE IT SHOULDNT MATTER WHAT IT SEES RIGHT????
         # if src_mask is None:
         #     """Generate a square causal mask for the sequence. The masked positions are filled with float('-inf').
@@ -110,7 +110,7 @@ class TransformerINATOR(nn.Module):
         #     """
         #     src_mask = nn.Transformer.generate_square_subsequent_mask(len(src)).to(device)
         output = self.encoder(src, src_mask, src_padding_mask)
-        output = self.linear_out(output)
+        output = self.linear_out(torch.flatten(output, start_dim=1))
         return output
 
     def do_train(self, dataloader: DataLoader, num_epochs: int, optimizer: torch.optim.Optimizer, loss_fn: Callable,
@@ -153,11 +153,13 @@ class TransformerINATOR(nn.Module):
             pred = self.forward(src, src_mask, src_padding_mask)
             optimizer.zero_grad()
 
-            loss = loss_fn(pred.reshape(-1, pred.shape[-1]), tgt.reshape(-1))
+            test = pred.reshape(-1, pred.shape[-1])
+            test1 = tgt.reshape(-1)
+            loss = loss_fn(test, test1)
             loss.backward()
 
             # IDK if I need this?
-            torch.nn.utils.clip_grad_norm_(self.parameters(), 0.5)
+            # torch.nn.utils.clip_grad_norm_(self.parameters(), 0.5)
             optimizer.step()
             losses += loss.item()
 
