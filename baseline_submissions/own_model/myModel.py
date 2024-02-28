@@ -1,15 +1,18 @@
 from pathlib import Path
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Any, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
+from lightning.pytorch.utilities.types import STEP_OUTPUT, OptimizerLRScheduler
 from torch import Tensor
 from torch.utils.data import DataLoader
 import torch.nn as nn
 import torch.nn.functional as F
 import math
 from timeit import default_timer as timer
+import lightning as L
+from torchmetrics.classification import Accuracy, FBetaScore, Recall, Precision
 
 from baseline_submissions.evaluation import NodeDetectionEvaluator
 from baseline_submissions.own_model.dataset_manip import convert_tgts_for_eval, MyDataset
@@ -220,3 +223,82 @@ class TransformerINATOR(nn.Module):
         # maybe this is dependents on the BATCH_SIZE
         total_loss = total_loss / len(dataloader)
         return total_loss
+
+
+class LitClassifier(L.LightningModule):
+    def __init__(self, sequence_len: int, feature_size: int, num_classes: int):
+        super().__init__()
+
+        self.conv1 = nn.Conv1d(in_channels=feature_size, out_channels=16, kernel_size=3, stride=1, padding=1)
+        self.relu = nn.ReLU()
+        self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
+        self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1)
+        self.fc = nn.Linear(32 * (sequence_len // 4), num_classes)  # Adjust size based on pooling and conv layers
+
+        # maybe use average = 'macro'
+        self.test_accuracy = Accuracy(task="multiclass", num_classes=num_classes)
+        self.test_recall = Recall(task="multiclass", num_classes=num_classes)
+        self.test_precision = Precision(task="multiclass", num_classes=num_classes)
+        self.test_f2score = FBetaScore(task="multiclass", beta=2.0, num_classes=num_classes)
+        self.train_f2score = FBetaScore(task="multiclass", beta=2.0, num_classes=num_classes)
+        self.valid_f2score = FBetaScore(task="multiclass", beta=2.0, num_classes=num_classes)
+
+    def forward(self, src: Tensor, *args: Any, **kwargs: Any) -> Tensor:
+        # Reshape input to (batch_size, feature_size, sequence_len)
+        src = src.permute(0, 2, 1)
+        src = self.conv1(src)
+        src = self.relu(src)
+        src = self.pool(src)
+        src = self.conv2(src)
+        src = self.relu(src)
+        src = self.pool(src)
+        # Flatten for the fully connected layer
+        src = torch.flatten(src, 1)
+        src = self.fc(src)
+        return src
+
+    def training_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
+        loss, logits, tgt = self.single_step(batch)
+
+        # log stuff
+        self.log('train_loss', loss)
+        self.log('train_f2', self.train_f2score(logits, tgt), prog_bar=True)
+
+        return loss
+
+    def validation_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
+        loss, logits, tgt = self.single_step(batch)
+
+        # log stuff
+        self.log('val_loss', loss)
+        self.log('val_f2', self.train_f2score(logits, tgt))
+        return loss
+
+
+    def test_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
+        loss, logits, tgt = self.single_step(batch)
+
+        # log stuff
+        self.log('test_loss', loss)
+        self.log('test_acc', self.test_accuracy(logits, tgt))
+        self.log('test_recall', self.test_recall(logits, tgt))
+        self.log('test_precision', self.test_precision(logits, tgt))
+        self.log('test_f2', self.test_f2score(logits, tgt))
+        return loss
+
+    def single_step(self, batch, *args: Any, **kwargs: Any) -> Tuple[Tensor, Tensor, Tensor]:
+        src, tgt, objectIDs, timeIndices = batch
+
+        logits = self(src)
+
+        logits = logits.view(logits.size(0), -1)
+        tgt = tgt.reshape(-1)
+
+        loss_fnc = nn.CrossEntropyLoss()
+        loss = loss_fnc(logits, tgt)
+
+        return loss, logits, tgt
+
+    def configure_optimizers(self) -> OptimizerLRScheduler:
+        optimizer = torch.optim.Adam(self.parameters())
+        return optimizer
