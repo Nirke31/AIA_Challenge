@@ -82,10 +82,10 @@ def load_datasets(train_test_ratio: float, random_state: int, amount: int = 10):
 
 
 # Learning settings
-NUM_CSV_SETS = 500  # -1 = all
+NUM_CSV_SETS = 50  # -1 = all
 TRAIN_TEST_RATIO = 0.8
 BATCH_SIZE = 5
-NUM_EPOCHS = 100
+NUM_EPOCHS = 150
 SHUFFLE_DATA = False
 FEATURES = ["Eccentricity",
             "Semimajor Axis (m)",
@@ -160,7 +160,7 @@ if __name__ == "__main__":
     model.to(DEVICE)
 
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=TGT_PADDING_NBR)
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR, betas=BETAS, eps=EPS, weight_decay=WEIGHT_DECAY)
+    optimizer = torch.optim.RAdam(model.parameters(), lr=LR, betas=BETAS, eps=EPS, weight_decay=WEIGHT_DECAY)
     # optimizer = torch.optim.SGD(model.parameters())
 
     # train or load
