@@ -52,16 +52,17 @@ torch.backends.cuda.enable_flash_sdp(True)
 
 def collate_fn(batch):
     # probably a smarter way but whatever
-    src_batch, tgt_batch, objectID = [], [], []
-    for src, tgt, id in batch:
+    src_batch, tgt_batch, objectID_batch, timeIndex_batch = [], [], [], []
+    for src, tgt, id, timeIndex in batch:
         src_batch.append(src)
         tgt_batch.append(tgt)
-        objectID.append(id)
+        objectID_batch.append(id)
+        timeIndex_batch.append(timeIndex)
 
     src_batch = pad_sequence_vec(src_batch, padding_vec=SRC_PADDING_VEC)
     tgt_batch = pad_sequence(tgt_batch, batch_first=True, padding_value=TGT_PADDING_NBR)
 
-    return src_batch, tgt_batch, torch.tensor(objectID)
+    return src_batch, tgt_batch, torch.tensor(objectID_batch), torch.tensor(timeIndex_batch)
 
 
 def load_datasets(train_test_ratio: float, random_state: int, amount: int = 10):
@@ -81,31 +82,11 @@ def load_datasets(train_test_ratio: float, random_state: int, amount: int = 10):
 
 
 # Learning settings
-NUM_CSV_SETS = 50  # -1 = all
+NUM_CSV_SETS = 500  # -1 = all
 TRAIN_TEST_RATIO = 0.8
-BATCH_SIZE = 1
+BATCH_SIZE = 5
 NUM_EPOCHS = 100
 SHUFFLE_DATA = False
-# FEATURES_AND_TGT = [
-#     "Timestamp",
-#     "Eccentricity",
-#     "Semimajor Axis (m)",
-#     "Inclination (deg)",
-#     "RAAN (deg)",
-#     "Argument of Periapsis (deg)",
-#     "True Anomaly (deg)",
-#     "Latitude (deg)",
-#     "Longitude (deg)",
-#     "Altitude (m)",
-#     "X (m)",
-#     "Y (m)",
-#     "Z (m)",
-#     "Vx (m/s)",
-#     "Vy (m/s)",
-#     "Vz (m/s)",
-#     "EW",
-#     "NS"
-# ]
 FEATURES = ["Eccentricity",
             "Semimajor Axis (m)",
             "Inclination (deg)",
@@ -120,7 +101,7 @@ FEATURES = ["Eccentricity",
             "Z (m)",
             "Vx (m/s)",
             "Vy (m/s)",
-            #"Vz (m/s)"
+            # "Vz (m/s)"
             ]
 # Transformer settings
 NHEAD = 8
@@ -131,7 +112,7 @@ DIM_HIDDEN = 128
 N_LAYERS = 2
 DROPOUT = 0.1
 # Optimizer settings
-LR = 0.0001
+LR = 0.001
 BETAS = (0.9, 0.98)
 EPS = 1e-9
 WEIGHT_DECAY = 0  # For now keep as ADAM, default
@@ -164,6 +145,8 @@ if __name__ == "__main__":
     split_ier = math.floor(labels.shape[0] * TRAIN_TEST_RATIO)
     train_labels = labels.iloc[:split_ier]
     test_labels = labels.iloc[split_ier:]
+    test_labels.reset_index(drop=True, inplace=True)
+    # HAVE TO IMPROVE THIS ABOVE OR PUT INTO FUNCTION
 
     # test_df = train_df.copy()  # FOR DEBUGGING ONLY
     window_size = 11
@@ -191,15 +174,15 @@ if __name__ == "__main__":
             plt.show(block=True)
             # time.sleep(1)
 
-    # print("Evaluation:")
-    # if LOAD_EVAL:
-    #     tgt = pd.read_csv(Path("evaluations/tgt.csv"))
-    #     pred = pd.read_csv(Path("evaluations/pred.csv"))
-    #     evaluatinator = NodeDetectionEvaluator(tgt, pred, 6)
-    # else:
-    #     evaluatinator, loss = model.do_test(dataloader_test, loss_fn, SRC_PADDING_VEC, DEVICE)
-    #     print(f"Loss over all test sequences: {loss}")
-    #
+    print("Evaluation:")
+    if LOAD_EVAL:
+        tgt = pd.read_csv(Path("evaluations/tgt.csv"))
+        pred = pd.read_csv(Path("evaluations/pred.csv"))
+        evaluatinator = NodeDetectionEvaluator(tgt, pred, 6)
+    else:
+        loss = model.do_test(dataloader_test, loss_fn, SRC_PADDING_VEC, DEVICE)
+        print(f"Loss over all test sequences: {loss}")
+
     # precision, recall, f2, rmse = evaluatinator.score(debug=True)
     # print(f'Precision: {precision:.2f}')
     # print(f'Recall: {recall:.2f}')

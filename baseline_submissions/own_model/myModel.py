@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional, List, Callable
 
+import numpy as np
 import pandas as pd
 import torch
 from torch import Tensor
@@ -143,7 +144,7 @@ class TransformerINATOR(nn.Module):
         self.train()
         losses = 0.0
 
-        for src, tgt, objectIds in dataloader:
+        for src, tgt, objectIds, timeIndex in dataloader:
             src_mask = create_src_mask(src, self.nhead, device)
             src_padding_mask = create_src_padding_mask(src, padding_vec, device)
 
@@ -175,7 +176,7 @@ class TransformerINATOR(nn.Module):
         tgt_df_all = []
         tgt_dict = dataloader.dataset.tgt_dict_int_to_str
 
-        for src, tgt, objectIDs in dataloader:
+        for src, tgt, objectIDs, timeIndex in dataloader:
             src_mask = create_src_mask(src, self.nhead, device)
             src_padding_mask = create_src_padding_mask(src, padding_vec, device)
 
@@ -186,19 +187,36 @@ class TransformerINATOR(nn.Module):
             loss = loss_fn(pred.reshape(-1, pred.shape[-1]), tgt.reshape(-1))
             total_loss += loss.item()
 
-            pred_df, tgt_df = convert_tgts_for_eval(pred, tgt, objectIDs, tgt_dict)
+            # TODO: into function
+            tgt_np = tgt.numpy(force=True)  # 'most likely' a copy, forced of the GPU to cpu
+            pred_np = pred.numpy(force=True)
+            tgt_np = tgt_np.squeeze(-1)
+            pred_np = np.argmax(pred_np, axis=-1)
+
+            pred_df = pd.DataFrame(pred_np, columns=["Type"])
+            tgt_df = pd.DataFrame(tgt_np, columns=["Type"])
+            pred_df["ObjectID"] = objectIDs
+            tgt_df["ObjectID"] = objectIDs
+            pred_df["TimeIndex"] = timeIndex
+            tgt_df["TimeIndex"] = timeIndex
+
             pred_df_all.append(pred_df)
             tgt_df_all.append(tgt_df)
 
         pred_df_all = pd.concat(pred_df_all)
         tgt_df_all = pd.concat(tgt_df_all)
+        pred_df_all.loc[:, "Type"] = pred_df_all.loc[:, "Type"].map(dataloader.dataset.tgt_dict_int_to_str)
+        tgt_df_all.loc[:, "Type"] = tgt_df_all.loc[:, "Type"].map(dataloader.dataset.tgt_dict_int_to_str)
 
         pred_df_all.to_csv(Path("./evaluations/pred.csv"), index=False)
         tgt_df_all.to_csv(Path("./evaluations/tgt.csv"), index=False)
         print("Evaluation stored")
-
-        evaluator = NodeDetectionEvaluator(tgt_df_all, pred_df_all, 6)
+        test = pred_df_all.loc[:, "Type"] == tgt_df_all.loc[:, "Type"]
+        true_predicted = test.sum()
+        false_predicted = (~test).sum()
+        print(f"True predicted: {true_predicted}")
+        print(f"False predicted: {false_predicted}")
 
         # maybe this is dependents on the BATCH_SIZE
         total_loss = total_loss / len(dataloader)
-        return evaluator, total_loss
+        return total_loss

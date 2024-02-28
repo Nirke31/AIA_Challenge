@@ -84,7 +84,8 @@ class GetWindowDataset(IterableDataset):
                     tgt_value_int = self.tgt.loc[row_idx, "Type"]
                     yield (torch.from_numpy(src_array),
                            torch.tensor([[tgt_value_int]]),
-                           self.tgt.loc[row_idx, "ObjectID"])
+                           self.tgt.loc[row_idx, "ObjectID"],
+                           self.tgt.loc[row_idx, "TimeIndex"])
 
         return yield_time_series()
 
