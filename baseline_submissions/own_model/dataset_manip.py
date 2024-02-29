@@ -42,6 +42,12 @@ class GetWindowDataset(IterableDataset):
         # create all window sequences
         self._prepare_source(self.data_in.shape[-1])
 
+        # create extra feature, showing which window is starting at index 0
+        zero_timeIndex_feature = (self.tgt.loc[:, "TimeIndex"] == 0).to_numpy().astype('float32')
+        test = np.expand_dims(zero_timeIndex_feature, axis=(1, 2))
+        test = np.repeat(test, window_size, axis=1)
+        self.src = np.append(self.src, test, axis=-1)
+
     def _prepare_source(self, feature_size) -> None:
         for i, (row_idx, row) in enumerate(self.tgt.iterrows()):
             objectID = row["ObjectID"]
@@ -184,7 +190,7 @@ def load_data_window_ready(data_location: Path, label_location: Path, amount: in
     # drop end of study targets as we do not have to predict those
     labels = labels[labels['Type'] != 'ES']
     # drop labels at first position. ATM for testing. Later probably use own classifier for predicting them?
-    labels = labels[labels['TimeIndex'] != 0]
+    # labels = labels[labels['TimeIndex'] != 0]
     # if we only load a few csv's, then just load the targets of the loaded objectIDs
     labels = labels[labels['ObjectID'].isin(loaded_objectIDs)]
     labels.reset_index(drop=True, inplace=True)
@@ -209,14 +215,6 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
                  "Altitude (m)": float_size, "X (m)": float_size, "Y (m)": float_size, "Z (m)": float_size,
                  "Vx (m/s)": float_size, "Vy (m/s)": float_size, "Vz (m/s)": float_size}
 
-    # if amount < 1:
-    #     # load whole dataset. I pre-safed one already.
-    #     df = pd.read_csv('./dataset/all_data.csv', dtype={**datatypes, **{"EW": str, "NS": str, "EW/NS": str}})
-    #     # in stored dataset the timestamp is already converted to float
-    #     df['Timestamp'] = df['Timestamp'].astype(float_size)
-    #     df.index = pd.MultiIndex.from_frame(df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
-    #     return df
-
     out_df = pd.DataFrame()  # all data
     labels = pd.read_csv(label_location)  # ObjectID,TimeIndex,Direction,Node,Type
 
@@ -230,7 +228,7 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         data_df['TimeIndex'] = range(len(data_df))
         # convert timestamp from str to float
         data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(float_size)
-        # data_df.drop(labels='Timestamp', axis=1, inplace=True)  # for now lets just drop it
+        data_df.drop(labels='Timestamp', axis=1, inplace=True)
 
         # Add EW and NS nodes to data. They are extracted from the labels and converted to integers
 
@@ -258,7 +256,7 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
 
         indecies = merged_df[merged_df['EW'] == 1].index
 
-        seq_len = len(data_df)
+        # seq_len = len(data_df)
         # for idx in indecies:
         #     puffer = 6
         #     start = idx - puffer if idx - puffer >= 0 else 0
@@ -277,6 +275,67 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
     out_df.sort_index(inplace=True)
 
     return out_df
+
+
+def load_first_sample(data_location: Path, label_location: Path, amount: int = -1) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    data_path = data_location.glob('*.csv')
+    label_path = label_location.glob('*.csv')
+    # Check if data_location is empty
+    if not data_path:
+        raise ValueError(f'No csv files found in {data_path}')
+    if not label_path:
+        raise ValueError(f'No csv file found in {label_path}')
+
+    float_size = 'float32'
+    datatypes = {"Timestamp": "str", "Eccentricity": float_size, "Semimajor Axis (m)": float_size,
+                 "Inclination (deg)": float_size, "RAAN (deg)": float_size,
+                 "Argument of Periapsis (deg)": float_size,
+                 "True Anomaly (deg)": float_size, "Latitude (deg)": float_size, "Longitude (deg)": float_size,
+                 "Altitude (m)": float_size, "X (m)": float_size, "Y (m)": float_size, "Z (m)": float_size,
+                 "Vx (m/s)": float_size, "Vy (m/s)": float_size, "Vz (m/s)": float_size}
+
+    out_df = pd.DataFrame()  # all data
+    labels = pd.read_csv(label_location)  # ObjectID,TimeIndex,Direction,Node,Type
+    labels = labels.loc[labels.loc[:, "TimeIndex"] == 0, :]
+
+    loaded_objectIDs = []
+
+    # Load out_df
+    for i, data_file in enumerate(data_path):
+        if i == amount:
+            break
+
+        data_df = pd.read_csv(data_file, dtype=datatypes, nrows=1)
+        object_id = int(data_file.stem)  # csv is named after its objectID/other way round
+        data_df['ObjectID'] = object_id
+        data_df['TimeIndex'] = range(len(data_df))
+        # convert timestamp from str to float
+        data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(float_size)
+        data_df.drop(labels='Timestamp', axis=1, inplace=True)
+
+        out_df = pd.concat([out_df, data_df])
+        # append to later just drop all tgts that habe not been loaded
+        loaded_objectIDs.append(object_id)
+
+    labels = labels.loc[labels.loc[:, 'ObjectID'].isin(loaded_objectIDs), :]
+    # just get the EW and NS direction Series, explicit copy, because pandas is crying
+    EW_labels = labels.loc[labels.loc[:, 'Direction'] == 'EW', :].copy()
+    NS_labels = labels.loc[labels.loc[:, 'Direction'] == 'NS', :].copy()
+    # reset indices for merge into single Series
+    EW_labels.reset_index(drop=True, inplace=True)
+    NS_labels.reset_index(drop=True, inplace=True)
+
+    # merge into single series. Just use the existing EW Series
+    EW_labels.loc[:, "EW"] = EW_labels.loc[:, "Type"]
+    EW_labels.loc[:, "NS"] = NS_labels.loc[:, "Type"]
+    EW_labels.drop(labels=["Direction", "Node", "Type", "TimeIndex"], axis=1, inplace=True)
+
+    out_df.sort_values(by=['ObjectID'])
+    EW_labels.sort_values(by=['ObjectID'])
+    out_df.reset_index(drop=True, inplace=True)
+    EW_labels.reset_index(drop=True, inplace=True)
+
+    return out_df, EW_labels
 
 
 # TODO: TEST IF SPLIT CORRECT
