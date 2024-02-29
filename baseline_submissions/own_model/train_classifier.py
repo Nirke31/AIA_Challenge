@@ -39,14 +39,14 @@ TRAINED_MODEL_PATH = Path('./trained_model/' + TRAINED_MODEL_NAME)
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
 TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
 
-NUM_CSV_SETS = 10
+NUM_CSV_SETS = -1
 SRC_SIZE = len(FEATURES)
 TGT_SIZE = 5  # based on the dataset dict
 TRAIN_TEST_RATIO = 0.8
 TRAIN_VAL_RATION = 0.8
 BATCH_SIZE = 5
 WINDOW_SIZE = 11
-EPOCHS = 100
+EPOCHS = 200
 
 if __name__ == "__main__":
     # FOR FITTING WINDOW MODEL
@@ -83,7 +83,7 @@ if __name__ == "__main__":
     print("Start fitting...")
 
     # get actual model
-    model = LitClassifier(WINDOW_SIZE, SRC_SIZE, TGT_SIZE)
+    model = LitClassifier(WINDOW_SIZE, SRC_SIZE + 1, TGT_SIZE)
     early_stop_callback = EarlyStopping(monitor="val_f2", mode="max", patience=5)
     trainer = L.Trainer(max_epochs=EPOCHS, enable_progress_bar=True,
                         callbacks=[early_stop_callback], check_val_every_n_epoch=10)
