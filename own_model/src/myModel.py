@@ -231,6 +231,9 @@ class LitClassifier(L.LightningModule):
         # needed for loading model
         self.save_hyperparameters()
 
+        # we add one in _prepare_source
+        feature_size += 1
+
         self.conv1 = nn.Conv1d(in_channels=feature_size, out_channels=16, kernel_size=3, stride=1, padding=1)
         self.relu = nn.ReLU()
         self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
@@ -299,6 +302,13 @@ class LitClassifier(L.LightningModule):
         loss = loss_fnc(logits, tgt)
 
         return loss, logits, tgt
+
+    def predict_step(self, batch, *args: Any, **kwargs: Any) -> Any:
+        src, objectIDs, timeSteps = batch
+        logits = self(src)
+        logits = logits.view(logits.size(0), -1)
+        pred = torch.argmax(logits, dim=1)
+        return pred, objectIDs, timeSteps
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         optimizer = torch.optim.Adam(self.parameters())
@@ -377,13 +387,6 @@ class LitChangePointClassifier(L.LightningModule):
         loss = loss_fnc(logits, tgt)
 
         return loss, logits, tgt
-
-    def predict_step(self, batch, *args: Any, **kwargs: Any) -> Any:
-        src, objectIDs, timeSteps = batch
-        logits = self(src)
-        logits = logits.view(logits.size(0), -1)
-        pred = torch.argmax(logits, dim=1)
-        return pred, objectIDs, timeSteps
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         optimizer = torch.optim.Adam(self.parameters())

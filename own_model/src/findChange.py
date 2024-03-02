@@ -23,17 +23,45 @@ from own_model.src.myModel import LitChangePointClassifier
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
 TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
 
+BASE_FEATURES_EW = ["Eccentricity",
+                    "Semimajor Axis (m)",
+                    "Inclination (deg)",
+                    "RAAN (deg)",
+                    "Argument of Periapsis (deg)",
+                    "True Anomaly (deg)",
+                    "Latitude (deg)",
+                    "Longitude (deg)",
+                    "Altitude (m)",
+                    ]
+
+BASE_FEATURES_NS = ["Eccentricity",
+                    "Semimajor Axis (m)",
+                    "Inclination (deg)",
+                    "RAAN (deg)",
+                    "Argument of Periapsis (deg)",
+                    "True Anomaly (deg)",
+                    "Latitude (deg)",
+                    "Longitude (deg)",
+                    "Altitude (m)",
+                    "X (m)",
+                    "Y (m)",
+                    "Z (m)",
+                    "Vx (m/s)",
+                    "Vy (m/s)",
+                    "Vz (m/s)"
+                    ]
+
 TRAIN_TEST_RATIO = 0.8
 RANDOM_STATE = 42
 EPOCHS = 17
 BATCH_SIZE = 1
 SHUFFLE_DATA = False
-DIRECTION = "EW"
+DIRECTION = "NS"
 
 L.seed_everything(RANDOM_STATE, workers=True)
 
 if __name__ == "__main__":
-    df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=-1)
+    df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=50)
     # manually remove the change point at time index 0. We know that there is a time change so we do not have to try
     # and predict it
     df.loc[df["TimeIndex"] == 0, "EW"] = 0
@@ -76,25 +104,10 @@ if __name__ == "__main__":
                                            test_size=1 - TRAIN_TEST_RATIO,
                                            random_state=RANDOM_STATE)
     rf = RandomForestClassifier(n_estimators=150, random_state=RANDOM_STATE, n_jobs=5, class_weight="balanced")
-    FEATURES = ["Eccentricity",
-                "Semimajor Axis (m)",
-                "Inclination (deg)",
-                "RAAN (deg)",
-                "Argument of Periapsis (deg)",
-                "True Anomaly (deg)",
-                "Latitude (deg)",
-                "Longitude (deg)",
-                "Altitude (m)",
-                # "X (m)",
-                # "Y (m)",
-                # "Z (m)",
-                # "Vx (m/s)",
-                # "Vy (m/s)",
-                # "Vz (m/s)"
-                ]
 
     # features selected based on rf feature importance.
-    engineered_features = {
+    features = BASE_FEATURES_EW if DIRECTION == "EW" else BASE_FEATURES_NS
+    engineered_features_ew = {
         ("var", lambda x: x.rolling(window=window_size).var()):
             ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
         ("std", lambda x: x.rolling(window=window_size).std()):
@@ -106,16 +119,29 @@ if __name__ == "__main__":
         ("sem", lambda x: x.rolling(window=window_size).sem()):
             ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
     }
+    engineered_features_ns = {
+        ("var", lambda x: x.rolling(window=window_size).var()):
+            ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+        ("std", lambda x: x.rolling(window=window_size).std()):
+            ["Semimajor Axis (m)"],  # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
+        ("skew", lambda x: x.rolling(window=window_size).skew()):
+            ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
+        # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
+        #     ["Eccentricity", "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"],
+        ("sem", lambda x: x.rolling(window=window_size).sem()):
+            ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+    }
 
     # FEATURE ENGINEERING
     window_size = 6
-    for (math_type, lambda_fnc), feature_list in engineered_features.items():
+    feature_dict = engineered_features_ew if DIRECTION == "EW" else engineered_features_ns
+    for (math_type, lambda_fnc), feature_list in feature_dict.items():
         for feature in feature_list:
-            new_feature_name = feature + "_" + math_type
+            new_feature_name = feature + "_" + math_type + "_" + DIRECTION
             # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
             # and then added back to the DF
             df[new_feature_name] = df.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc)
-            FEATURES.append(new_feature_name)
+            features.append(new_feature_name)
 
     # for feature in FEATURES:
     #     df[feature + "_var"] = df.groupby(level=0, group_keys=False)[[feature]].apply(
@@ -127,8 +153,8 @@ if __name__ == "__main__":
     df = df.bfill()
 
     # scaling, just to be sure
-    df.loc[:, FEATURES] = pd.DataFrame(StandardScaler().fit_transform(df.loc[:, FEATURES]),
-                                       index=df.index, columns=FEATURES)
+    df.loc[:, features] = pd.DataFrame(StandardScaler().fit_transform(df.loc[:, features]),
+                                       index=df.index, columns=features)
 
     test_data = df.loc[test_ids].copy()
     train_data = df.loc[train_ids].copy()
@@ -151,14 +177,14 @@ if __name__ == "__main__":
     print("Fitting...")
     start_time = timer()
     # rf = load("state_classifier_full_job.joblib")
-    rf.fit(train_data[FEATURES], train_data[DIRECTION])
+    rf.fit(train_data[features], train_data[DIRECTION])
     print(f"Took: {timer() - start_time:.3f} seconds")
     # Write classifier to disk
-    dump(rf, "trained_model/state_classifier.joblib")
+    dump(rf, "../trained_model/state_classifier.joblib")
 
     print("Predicting...")
-    train_data["PREDICTED"] = rf.predict(train_data[FEATURES])
-    test_data["PREDICTED"] = rf.predict(test_data[FEATURES])
+    train_data["PREDICTED"] = rf.predict(train_data[features])
+    test_data["PREDICTED"] = rf.predict(test_data[features])
 
     print("TRAIN RESULTS:")
     total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(train_data["PREDICTED"].to_numpy()),
@@ -198,11 +224,11 @@ if __name__ == "__main__":
     # feature importance with permutation, more robust or smth like that
     start_time = timer()
     f2_scorer = make_scorer(fbeta_score, beta=2)
-    result = permutation_importance(rf, test_data[FEATURES], test_data[DIRECTION].to_numpy(), n_repeats=10,
+    result = permutation_importance(rf, test_data[features], test_data[DIRECTION].to_numpy(), n_repeats=10,
                                     random_state=RANDOM_STATE, n_jobs=1, scoring=f2_scorer)
     elapsed_time = timer() - start_time
     print(f"Elapsed time to compute the importances: {elapsed_time:.3f} seconds")
-    forest_importances = pd.Series(result.importances_mean, index=FEATURES)
+    forest_importances = pd.Series(result.importances_mean, index=features)
     fig, ax = plt.subplots()
     forest_importances.plot.bar(yerr=result.importances_std, ax=ax)
     ax.set_title("Feature importances using permutation on full model")

@@ -26,7 +26,7 @@ FEATURES = ["Eccentricity",
             "Z (m)",
             "Vx (m/s)",
             "Vy (m/s)",
-            # "Vz (m/s)"
+            "Vz (m/s)"
             ]
 
 # User settings
@@ -39,7 +39,7 @@ TRAINED_MODEL_PATH = Path('./trained_model/' + TRAINED_MODEL_NAME)
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
 TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
 
-NUM_CSV_SETS = -1
+NUM_CSV_SETS = 500
 SRC_SIZE = len(FEATURES)
 TGT_SIZE = 5  # based on the dataset dict
 TRAIN_TEST_RATIO = 0.8
@@ -47,6 +47,7 @@ TRAIN_VAL_RATION = 0.8
 BATCH_SIZE = 20
 WINDOW_SIZE = 11
 EPOCHS = 400
+DIRECTION = "EW"
 
 if __name__ == "__main__":
     # FOR FITTING WINDOW MODEL
@@ -58,7 +59,7 @@ if __name__ == "__main__":
     EW_labels = labels[labels["Direction"] == "EW"]
     NS_labels = labels[labels["Direction"] == "NS"]
     # shuffle targets
-    labels = EW_labels.copy()  # set here which direction we are training
+    labels = EW_labels.copy() if DIRECTION == "EW" else NS_labels.copy()  # sets here which direction we are training
     labels = labels.sample(frac=1)
     labels.reset_index(drop=True, inplace=True)
 
@@ -86,7 +87,7 @@ if __name__ == "__main__":
     print("Start fitting...")
 
     # get actual model
-    model = LitClassifier(WINDOW_SIZE, SRC_SIZE + 1, TGT_SIZE)
+    model = LitClassifier(WINDOW_SIZE, SRC_SIZE, TGT_SIZE)
     early_stop_callback = EarlyStopping(monitor="val_f2", mode="max", patience=5)
     trainer = L.Trainer(max_epochs=EPOCHS, enable_progress_bar=True,
                         callbacks=[early_stop_callback], check_val_every_n_epoch=10, accumulate_grad_batches=5)
@@ -94,4 +95,4 @@ if __name__ == "__main__":
     trainer.test(model=model, dataloaders=dataloader_test)
 
     # store model
-    trainer.save_checkpoint("trained_model/classification.ckpt")
+    trainer.save_checkpoint("../trained_model/classification.ckpt")

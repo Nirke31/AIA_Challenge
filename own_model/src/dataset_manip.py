@@ -51,17 +51,22 @@ class SubmissionWindowDataset(IterableDataset):
         self._prepare_source(self.data_in.shape[-1])
 
         # create extra feature, showing which window is starting at index 0
-        zero_timeIndex_feature = (self.data_in.loc[:, "TimeIndex"] == 0).to_numpy().astype('float32')
-        test = np.expand_dims(zero_timeIndex_feature, axis=(1, 2))
-        test = np.repeat(test, window_size, axis=1)
-        self.src = np.append(self.src, test, axis=-1)
+        zero_timeIndices = self.data_in.loc[self.data_in.loc[:, "PREDICTED_EW"].astype(dtype="bool"), "TimeIndex"]
+        zero_timeIndex_feature = (zero_timeIndices == 0).to_numpy().astype('float32')
+
+        # bring into correct shape to add to src
+        expand_window_and_feature_size = np.expand_dims(zero_timeIndex_feature, axis=(1, 2))
+        correct_window_size = np.repeat(expand_window_and_feature_size, window_size, axis=1)
+        self.src = np.append(self.src, correct_window_size, axis=-1)
 
     def _prepare_source(self, feature_size) -> None:
 
         if self.direction == "EW":
-            self.predicted_tgts = self.data_in.loc[self.data_in.loc[:, "PREDICTED_EW"], :]
+            self.predicted_tgts = self.data_in.loc[
+                self.data_in.loc[:, "PREDICTED_EW"].astype(dtype="bool"), ["ObjectID", "TimeIndex"]]
         else:
-            self.predicted_tgts = self.data_in.loc[self.data_in.loc[:, "PREDICTED_NS"], :]
+            self.predicted_tgts = self.data_in.loc[
+                self.data_in.loc[:, "PREDICTED_NS"].astype(dtype="bool"), ["ObjectID", "TimeIndex"]]
 
         for i, (row_idx, row) in enumerate(self.predicted_tgts.iterrows()):
             objectID = row["ObjectID"]
@@ -82,18 +87,18 @@ class SubmissionWindowDataset(IterableDataset):
                 start_iter -= (src_seq_len - end_iter)
 
             # the end_iter is also returned by pandas because it is accessing via index (?!)
-            # my end_iter is therefore one smaller than 'normaly'
+            # my end_iter is therefore one smaller than 'normally'
             assert (end_iter - start_iter) == self.window_size - 1, "Something wrong"
 
             # push window into src
-            self.src[i, :, :] = self.data_in[(objectID, start_iter): (objectID, end_iter), self.features].to_numpy()
+            self.src[i, :, :] = self.data_in.loc[(objectID, slice(start_iter, end_iter)), self.features].to_numpy()
         return
 
     def __iter__(self):
         # reset index, such that we can use a simple range to iterate over the src array and pandas dataframe
         self.predicted_tgts.reset_index(drop=True, inplace=True)
 
-        size = self.data_in.shape[0]
+        size = self.src.shape[0]
 
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:  # single-process data loading, return the full iterator
@@ -117,6 +122,7 @@ class SubmissionWindowDataset(IterableDataset):
                     yield (torch.from_numpy(src_array),
                            torch.tensor(self.predicted_tgts.loc[row_idx, "ObjectID"]),
                            torch.tensor(self.predicted_tgts.loc[row_idx, "TimeIndex"]))
+
         return yield_time_series()
 
 
