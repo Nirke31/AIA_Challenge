@@ -228,6 +228,8 @@ class TransformerINATOR(nn.Module):
 class LitClassifier(L.LightningModule):
     def __init__(self, sequence_len: int, feature_size: int, num_classes: int):
         super().__init__()
+        # needed for loading model
+        self.save_hyperparameters()
 
         self.conv1 = nn.Conv1d(in_channels=feature_size, out_channels=16, kernel_size=3, stride=1, padding=1)
         self.relu = nn.ReLU()
@@ -270,10 +272,9 @@ class LitClassifier(L.LightningModule):
         loss, logits, tgt = self.single_step(batch)
 
         # log stuff
-        self.log('val_loss', loss)
-        self.log('val_f2', self.train_f2score(logits, tgt))
+        self.log('val_loss', loss, rank_zero_only=True)
+        self.log('val_f2', self.valid_f2score(logits, tgt), rank_zero_only=True)
         return loss
-
 
     def test_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
         loss, logits, tgt = self.single_step(batch)
@@ -298,6 +299,91 @@ class LitClassifier(L.LightningModule):
         loss = loss_fnc(logits, tgt)
 
         return loss, logits, tgt
+
+    def configure_optimizers(self) -> OptimizerLRScheduler:
+        optimizer = torch.optim.Adam(self.parameters())
+        return optimizer
+
+
+class LitChangePointClassifier(L.LightningModule):
+    def __init__(self, sequence_len: int, feature_size: int):
+        super().__init__()
+
+        self.sequence_length = sequence_len
+        self.conv1 = nn.Conv1d(in_channels=feature_size, out_channels=64, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv1d(in_channels=64, out_channels=128, kernel_size=3, padding=1)
+        self.pool = nn.MaxPool1d(kernel_size=2, stride=2)
+        # Adjust the size according to your max sequence length and conv/pool layers
+        self.fc = nn.Linear(128 * (sequence_len // 4), sequence_len)
+
+        # maybe use average = 'macro'
+        self.test_accuracy = Accuracy(task="binary")
+        self.test_recall = Recall(task="binary")
+        self.test_precision = Precision(task="binary")
+        self.test_f2score = FBetaScore(task="binary", beta=2.0)
+        self.train_f2score = FBetaScore(task="binary", beta=2.0)
+        self.valid_f2score = FBetaScore(task="binary", beta=2.0)
+
+    def forward(self, x: Tensor, *args: Any, **kwargs: Any) -> Tensor:
+        # Reshape input to (batch_size, num_features, seq_length) for Conv1d
+        x = x.transpose(1, 2)
+        x = self.conv1(x)
+        x = nn.ReLU()(x)
+        x = self.pool(x)
+        x = self.conv2(x)
+        x = nn.ReLU()(x)
+        x = self.pool(x)
+        x = x.view(x.size(0), -1)  # Flatten
+        x = self.fc(x)
+        return x
+
+    def training_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
+        loss, logits, tgt = self.single_step(batch)
+
+        # log stuff
+        self.log('train_loss', loss)
+        self.log('train_f2', self.train_f2score(logits, tgt), prog_bar=True)
+
+        return loss
+
+    def validation_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
+        loss, logits, tgt = self.single_step(batch)
+
+        # log stuff
+        self.log('val_loss', loss)
+        self.log('val_f2', self.valid_f2score(logits, tgt))
+        return loss
+
+    def test_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
+        loss, logits, tgt = self.single_step(batch)
+
+        # log stuff
+        self.log('test_loss', loss)
+        self.log('test_acc', self.test_accuracy(logits, tgt))
+        self.log('test_recall', self.test_recall(logits, tgt))
+        self.log('test_precision', self.test_precision(logits, tgt))
+        self.log('test_f2', self.test_f2score(logits, tgt))
+        return loss
+
+    def single_step(self, batch, *args: Any, **kwargs: Any) -> Tuple[Tensor, Tensor, Tensor]:
+        src, tgt, objectIDs = batch
+
+        logits = self(src)
+
+        logits = logits.view(logits.size(0), -1)
+        tgt = tgt.squeeze(-1)
+
+        loss_fnc = nn.BCEWithLogitsLoss()
+        loss = loss_fnc(logits, tgt)
+
+        return loss, logits, tgt
+
+    def predict_step(self, batch, *args: Any, **kwargs: Any) -> Any:
+        src, objectIDs, timeSteps = batch
+        logits = self(src)
+        logits = logits.view(logits.size(0), -1)
+        pred = torch.argmax(logits, dim=1)
+        return pred, objectIDs, timeSteps
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         optimizer = torch.optim.Adam(self.parameters())

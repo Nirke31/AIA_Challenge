@@ -10,6 +10,120 @@ import math
 from typing import Tuple, Dict, List
 
 
+class SubmissionWindowDataset(IterableDataset):
+    """
+    Special dataset for the submission. Takes pandas dataframe as input. It includes a state change column
+    (either 1 for change or 0 for no change). Create windows for all time indices that are 1.
+    """
+
+    def __init__(self, data: pd.DataFrame, features: List[str], direction: str, window_size: int):
+        super().__init__()
+        assert data.empty is False, 'Input is empty brother'
+        if window_size % 2 == 0:
+            raise warnings.warn("I think odd window sizes is needed. Unknown behaviour maybe?")
+        self.window_size: int = window_size
+        self.features: List[str] = features
+        self.direction: str = direction
+
+        self.data_in: pd.DataFrame = data
+        feature_size = len(self.features)
+
+        num_change_points = 0
+        if direction == "EW":
+            num_change_points = (self.data_in.loc[:, "PREDICTED_EW"]).astype(dtype="int64").sum()
+        elif direction == "NS":
+            num_change_points = (self.data_in.loc[:, "PREDICTED_NS"]).astype(dtype="int64").sum()
+        else:
+            raise ValueError("wrong direction")
+
+        # create empty array for storing all window blocks
+        # later in __iter__ we only have to iterate over the src and tgt arrays and return them
+        # src is size [number of tgts, sequence length of window, feature size]
+        self.src = np.empty((num_change_points, self.window_size, feature_size), dtype=np.float32)
+        # storing the pandas dataframe of all the row that will be classified, assigned in _prepare_source
+        self.predicted_tgts = pd.DataFrame()
+
+        # translation dicts. generated from the dataset itself
+        self.tgt_dict_int_to_str = {0: "NK", 1: "CK", 2: "EK", 3: "HK", 4: "FAKE"}
+        self.tgt_dict_str_to_int = {v: k for k, v in self.tgt_dict_int_to_str.items()}
+
+        # create all window sequences
+        self._prepare_source(self.data_in.shape[-1])
+
+        # create extra feature, showing which window is starting at index 0
+        zero_timeIndex_feature = (self.data_in.loc[:, "TimeIndex"] == 0).to_numpy().astype('float32')
+        test = np.expand_dims(zero_timeIndex_feature, axis=(1, 2))
+        test = np.repeat(test, window_size, axis=1)
+        self.src = np.append(self.src, test, axis=-1)
+
+    def _prepare_source(self, feature_size) -> None:
+
+        if self.direction == "EW":
+            self.predicted_tgts = self.data_in.loc[self.data_in.loc[:, "PREDICTED_EW"], :]
+        else:
+            self.predicted_tgts = self.data_in.loc[self.data_in.loc[:, "PREDICTED_NS"], :]
+
+        for i, (row_idx, row) in enumerate(self.predicted_tgts.iterrows()):
+            objectID = row["ObjectID"]
+            time_index = row["TimeIndex"]
+            # The sequence length of a specific objectID. Important to not window out of the sequence
+            src_seq_len = self.data_in.loc[objectID].shape[0]
+
+            offset = (self.window_size - 1) / 2
+            start_iter = time_index - offset
+            end_iter = time_index + offset
+            # check out of range
+            if start_iter < 0:
+                # window would go negative. Therefore, move window upward
+                end_iter -= start_iter
+                start_iter = 0
+            elif end_iter >= src_seq_len:
+                # window would go beyond sequence. Therefore, move window down
+                start_iter -= (src_seq_len - end_iter)
+
+            # the end_iter is also returned by pandas because it is accessing via index (?!)
+            # my end_iter is therefore one smaller than 'normaly'
+            assert (end_iter - start_iter) == self.window_size - 1, "Something wrong"
+
+            # push window into src
+            self.src[i, :, :] = self.data_in[(objectID, start_iter): (objectID, end_iter), self.features].to_numpy()
+        return
+
+    def __iter__(self):
+        # reset index, such that we can use a simple range to iterate over the src array and pandas dataframe
+        self.predicted_tgts.reset_index(drop=True, inplace=True)
+
+        size = self.data_in.shape[0]
+
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:  # single-process data loading, return the full iterator
+            iter_start = 0
+            iter_end = size
+        else:  # in a worker process
+            # split workload
+            per_worker = int(math.ceil(float(size) / float(worker_info.num_workers)))
+            worker_id = worker_info.id
+            iter_start = worker_id * per_worker
+            iter_end = min(iter_start + per_worker, size)
+
+        def yield_time_series():
+            for row_idx in range(iter_start, iter_end):
+                # warning: numpy to tensor problem cuz numpy is not writable but tensor does not support that
+                # -> undefined behaviour on write, but we do not write so its fine (I hope)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+
+                    src_array = self.src[row_idx, :, :]
+                    yield (torch.from_numpy(src_array),
+                           torch.tensor(self.predicted_tgts.loc[row_idx, "ObjectID"]),
+                           torch.tensor(self.predicted_tgts.loc[row_idx, "TimeIndex"]))
+        return yield_time_series()
+
+
+def __len__(self):
+    return self.data_in.shape[0]
+
+
 class GetWindowDataset(IterableDataset):
     """
     input data must already have Multiindex (ObjectId, TimeIndex)
@@ -76,12 +190,25 @@ class GetWindowDataset(IterableDataset):
         return
 
     def __iter__(self):
+        size = self.tgt.shape[0]  # how many ObjectIDs?
+
         worker_info = torch.utils.data.get_worker_info()
-        if worker_info is not None:
-            raise NotImplementedError("Only works for one worker. Sry")
+        if worker_info is None:  # single-process data loading, return the full iterator
+            iter_start = 0
+            iter_end = size
+        else:  # in a worker process
+            # split workload
+            per_worker = int(math.ceil(float(size) / float(worker_info.num_workers)))
+            worker_id = worker_info.id
+            iter_start = worker_id * per_worker
+            iter_end = min(iter_start + per_worker, size)
+
+        # worker_info = torch.utils.data.get_worker_info()
+        # if worker_info is not None:
+        #     raise NotImplementedError("Only works for one worker. Sry")
 
         def yield_time_series():
-            for row_idx in range(self.tgt.shape[0]):
+            for row_idx in range(iter_start, iter_end):
                 # warning: numpy to tensor problem cuz numpy is not writable but tensor does not support that
                 # -> undefined behaviour on write, but we do not write so its fine (I hope)
                 with warnings.catch_warnings():
@@ -142,7 +269,8 @@ class MyDataset(IterableDataset):
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     yield (torch.from_numpy(self.src_df.loc[objectID].values),
-                           torch.from_numpy(self.tgt_df.loc[objectID].values).unsqueeze(1), objectID)
+                           torch.from_numpy(self.tgt_df.loc[objectID].values).unsqueeze(1),
+                           objectID)
 
         return yield_time_series(iter_start, iter_end)
 
@@ -219,7 +347,7 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
     labels = pd.read_csv(label_location)  # ObjectID,TimeIndex,Direction,Node,Type
 
     # Load out_df
-    for i, data_file in enumerate(data_path, start=1):
+    for i, data_file in enumerate(data_path):
         if i == amount:
             break
 

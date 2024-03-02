@@ -44,9 +44,9 @@ SRC_SIZE = len(FEATURES)
 TGT_SIZE = 5  # based on the dataset dict
 TRAIN_TEST_RATIO = 0.8
 TRAIN_VAL_RATION = 0.8
-BATCH_SIZE = 5
+BATCH_SIZE = 20
 WINDOW_SIZE = 11
-EPOCHS = 200
+EPOCHS = 400
 
 if __name__ == "__main__":
     # FOR FITTING WINDOW MODEL
@@ -58,6 +58,7 @@ if __name__ == "__main__":
     EW_labels = labels[labels["Direction"] == "EW"]
     NS_labels = labels[labels["Direction"] == "NS"]
     # shuffle targets
+    labels = EW_labels.copy()  # set here which direction we are training
     labels = labels.sample(frac=1)
     labels.reset_index(drop=True, inplace=True)
 
@@ -76,9 +77,11 @@ if __name__ == "__main__":
     ds_train = GetWindowDataset(data, train_labels, WINDOW_SIZE)
     ds_val = GetWindowDataset(data, val_labels, WINDOW_SIZE)
     ds_test = GetWindowDataset(data, test_labels, WINDOW_SIZE)
-    dataloader_train = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA)
-    dataloader_val = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA)
-    dataloader_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA)
+    dataloader_train = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA, num_workers=2,
+                                  persistent_workers=True, pin_memory=True)
+    dataloader_val = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA, num_workers=2,
+                                persistent_workers=True, pin_memory=True)
+    dataloader_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA, num_workers=2)
 
     print("Start fitting...")
 
@@ -86,9 +89,9 @@ if __name__ == "__main__":
     model = LitClassifier(WINDOW_SIZE, SRC_SIZE + 1, TGT_SIZE)
     early_stop_callback = EarlyStopping(monitor="val_f2", mode="max", patience=5)
     trainer = L.Trainer(max_epochs=EPOCHS, enable_progress_bar=True,
-                        callbacks=[early_stop_callback], check_val_every_n_epoch=10)
+                        callbacks=[early_stop_callback], check_val_every_n_epoch=10, accumulate_grad_batches=5)
     trainer.fit(model=model, train_dataloaders=dataloader_train, val_dataloaders=dataloader_val)
     trainer.test(model=model, dataloaders=dataloader_test)
 
-
-
+    # store model
+    trainer.save_checkpoint("trained_model/classification.ckpt")
