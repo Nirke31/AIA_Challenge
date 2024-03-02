@@ -17,8 +17,8 @@ from sklearn.inspection import permutation_importance
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
 
-from baseline_submissions.own_model.dataset_manip import load_data, state_change_eval, MyDataset
-from baseline_submissions.own_model.myModel import LitChangePointClassifier
+from own_model.src.dataset_manip import load_data, state_change_eval, MyDataset
+from own_model.src.myModel import LitChangePointClassifier
 
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
 TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")

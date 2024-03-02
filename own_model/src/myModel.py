@@ -15,7 +15,7 @@ import lightning as L
 from torchmetrics.classification import Accuracy, FBetaScore, Recall, Precision
 
 from baseline_submissions.evaluation import NodeDetectionEvaluator
-from baseline_submissions.own_model.dataset_manip import convert_tgts_for_eval, MyDataset
+from own_model.src.dataset_manip import convert_tgts_for_eval, MyDataset
 
 
 def create_src_mask(src: Tensor, num_heads: int, device: torch.device) -> Tensor:

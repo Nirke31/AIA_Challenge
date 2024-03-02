@@ -10,7 +10,7 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 
 from torchmetrics.classification import Accuracy, FBetaScore, Recall, Precision
 
-from baseline_submissions.own_model.dataset_manip import load_first_sample
+from own_model.src.dataset_manip import load_first_sample
 
 FEATURES = ["Eccentricity",
             "Semimajor Axis (m)",

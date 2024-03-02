@@ -8,8 +8,8 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
 import lightning as L
 
-from baseline_submissions.own_model.dataset_manip import load_data_window_ready, GetWindowDataset
-from baseline_submissions.own_model.myModel import LitClassifier
+from own_model.src.dataset_manip import load_data_window_ready, GetWindowDataset
+from own_model.src.myModel import LitClassifier
 
 SHUFFLE_DATA = False
 FEATURES = ["Eccentricity",
