@@ -292,7 +292,9 @@ def main():
     # Save the test results to a csv file to be submitted to the challenge
     test_results.to_csv(TEST_PREDS_FP, index=False)
     print("Saved predictions to: {}".format(TEST_PREDS_FP))
+
     if not DEBUG:
+        print("Waiting for EVALAI...")
         time.sleep(360)  # TEMPORARY FIX TO OVERCOME EVALAI BUG
 
 
