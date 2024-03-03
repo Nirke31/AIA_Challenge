@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Tuple, List
 import time
+import cProfile
 
 import torch
 import lightning as L
@@ -17,7 +18,7 @@ import pandas as pd
 
 # INPUT/OUTPUT PATHS WITHIN THE DOCKER CONTAINER
 TRAINED_MODEL_DIR = "../trained_model/"
-TEST_DATA_DIR = "../../dataset/test/"
+TEST_DATA_DIR = "../../dataset/phase_1_v2/train/"
 TEST_PREDS_FP = "../../submission/submission.csv"
 DEBUG = True
 
@@ -142,12 +143,14 @@ def load_test_data_and_preprocess(filepath: Path) -> Tuple[pd.DataFrame, List[st
     test_data_path = Path(filepath).glob('*.csv')
 
     # load data
-    merged_data = pd.DataFrame()
+    loaded_dfs = []
     for data_file in test_data_path:
         data_df = pd.read_csv(data_file)
         data_df['ObjectID'] = int(data_file.stem)
         data_df['TimeIndex'] = range(len(data_df))
-        merged_data = pd.concat([merged_data, data_df])
+        loaded_dfs.append(data_df)
+
+    merged_data = pd.concat(loaded_dfs, axis=0)
 
     md_index = pd.MultiIndex.from_frame(merged_data[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
     merged_data.index = md_index
@@ -209,12 +212,13 @@ def generate_output(pred_ew: Tensor, pred_ns: Tensor, int_to_str_translation: di
             prev_type = data
             continue
         # we are not station keeping, deduce if Node is ID or AD
-        if prev_type in SK:
-            # we were station keeping, so now we have ID
-            df_ew.loc[idx, "Node"] = "ID"
-        elif prev_type in ["ID", "AD"]:
+        if prev_type in ["ID", "AD"]:
             # already not station keeping -> AD
             df_ew.loc[idx, "Node"] = "AD"
+        else:
+            # we were station keeping, so now we have ID
+            # OR it was first node SS
+            df_ew.loc[idx, "Node"] = "ID"
 
         prev_type = data
 
@@ -239,6 +243,7 @@ def generate_output(pred_ew: Tensor, pred_ns: Tensor, int_to_str_translation: di
 
 
 def main():
+    start_time = time.perf_counter()
     # Load models for prediction
     rf_ew = load(TRAINED_MODEL_DIR + "state_classifier_EW.joblib")
     rf_ns = load(TRAINED_MODEL_DIR + "state_classifier_NS.joblib")
@@ -246,10 +251,17 @@ def main():
     classifier_ns: LitClassifier = LitClassifier.load_from_checkpoint(TRAINED_MODEL_DIR + "classification_NS.ckpt")
     # Read test dataset.
     df, rf_features_ew, rf_features_ns = load_test_data_and_preprocess(Path(TEST_DATA_DIR))
+    print(f"Time: {time.perf_counter() - start_time:4.0f}sec - Dataset loaded")
+    start_time = time.perf_counter()
 
+    scale_features = list(set(CLASSIFIER_FEATURES_EW + CLASSIFIER_FEATURES_NS + rf_features_ns + rf_features_ew))
+    df.loc[:, scale_features] = pd.DataFrame(StandardScaler().fit_transform(df.loc[:, scale_features]),
+                                             index=df.index, columns=scale_features)
     # predict state change
     df["PREDICTED_EW"] = rf_ew.predict(df[rf_features_ew])
     df["PREDICTED_NS"] = rf_ns.predict(df[rf_features_ns])
+    print(f"Time: {time.perf_counter() - start_time:4.0f}sec - States predicted")
+    start_time = time.perf_counter()
 
     # post-processing / pre-processing for classification
     # Manually set the state change at timeindex 0
@@ -257,39 +269,45 @@ def main():
     df.loc[df.loc[:, "TimeIndex"] == 0, "PREDICTED_NS"] = 1
     # load datasets for classification
     # get unique vals because in both are base features
-    scale_features = list(set(CLASSIFIER_FEATURES_EW + CLASSIFIER_FEATURES_NS))
-    df.loc[:, scale_features] = pd.DataFrame(StandardScaler().fit_transform(df.loc[:, scale_features]),
-                                             index=df.index, columns=scale_features)
 
     ds_ew = SubmissionWindowDataset(df, CLASSIFIER_FEATURES_EW, "EW", window_size=11)
-    ds_ns = SubmissionWindowDataset(df, CLASSIFIER_FEATURES_EW, "NS", window_size=11)
+    ds_ns = SubmissionWindowDataset(df, CLASSIFIER_FEATURES_NS, "NS", window_size=11)
     dataloader_ew = DataLoader(ds_ew, batch_size=20, num_workers=2)
     dataloader_ns = DataLoader(ds_ns, batch_size=10, num_workers=2)
+    print(f"Time: {time.perf_counter() - start_time:4.0f}sec - Dataloader")
+    start_time = time.perf_counter()
 
     # classification of type
     trainer = L.Trainer()
     prediction_list_ew = trainer.predict(classifier_ew, dataloader_ew, return_predictions=True)
     prediction_list_ns = trainer.predict(classifier_ns, dataloader_ns, return_predictions=True)
+    print(f"Time: {time.perf_counter() - start_time:4.0f}sec - Type predicted")
+    start_time = time.perf_counter()
     # output is a list of tuples. Refactor to tensor
     prediction_list_ew = torch.cat([torch.stack([a, b, c], dim=1) for a, b, c in prediction_list_ew], dim=0)
     prediction_list_ns = torch.cat([torch.stack([a, b, c], dim=1) for a, b, c in prediction_list_ns], dim=0)
-    # shape is (50, 3) but I want (3, 50)
-    # prediction_list_ew = prediction_list_ew.permute(1, 0)
-    # prediction_list_ns = prediction_list_ns.permute(1, 0)
 
     # deduce nodes
     test_results = generate_output(prediction_list_ew, prediction_list_ns, ds_ew.tgt_dict_int_to_str)
+    print(f"Time: {time.perf_counter() - start_time:4.0f}sec - Output generated")
 
     # Save the test results to a csv file to be submitted to the challenge
     test_results.to_csv(TEST_PREDS_FP, index=False)
     print("Saved predictions to: {}".format(TEST_PREDS_FP))
-    if DEBUG:
+    if not DEBUG:
         time.sleep(360)  # TEMPORARY FIX TO OVERCOME EVALAI BUG
 
 
 if __name__ == "__main__":
+    #cProfile.run('main()')
     main()
     if DEBUG:
         ground_truth = pd.read_csv("../../dataset/phase_1_v2/train_labels.csv")
         own = pd.read_csv("../../submission/submission.csv")
-        NodeDetectionEvaluator(ground_truth, own, tolerance=6)
+        test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
+        precision, recall, f2, rmse = test.score(debug=True)
+        print(f'Precision: {precision:.2f}')
+        print(f'Recall: {recall:.2f}')
+        print(f'F2: {f2:.2f}')
+        print(f'RMSE: {rmse:.2f}')
+        test.plot(1151)
