@@ -39,7 +39,6 @@ TRAINED_MODEL_PATH = Path('./trained_model/' + TRAINED_MODEL_NAME)
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
 TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
 
-NUM_CSV_SETS = 500
 SRC_SIZE = len(FEATURES)
 TGT_SIZE = 5  # based on the dataset dict
 TRAIN_TEST_RATIO = 0.8
@@ -47,7 +46,8 @@ TRAIN_VAL_RATION = 0.8
 BATCH_SIZE = 20
 WINDOW_SIZE = 11
 EPOCHS = 400
-DIRECTION = "EW"
+NUM_CSV_SETS = -1
+DIRECTION = "NS"
 
 if __name__ == "__main__":
     # FOR FITTING WINDOW MODEL
