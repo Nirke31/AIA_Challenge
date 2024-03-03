@@ -29,19 +29,17 @@ class SubmissionWindowDataset(IterableDataset):
         feature_size = len(self.features)
 
         num_change_points = 0
-        if direction == "EW":
-            num_change_points = (self.data_in.loc[:, "PREDICTED_EW"]).astype(dtype="int64").sum()
-        elif direction == "NS":
-            num_change_points = (self.data_in.loc[:, "PREDICTED_NS"]).astype(dtype="int64").sum()
-        else:
-            raise ValueError("wrong direction")
+        predicted_coloumn = "PREDICTED_" + self.direction
+
+        num_change_points = (self.data_in.loc[:, predicted_coloumn]).astype(dtype="int64").sum()
 
         # create empty array for storing all window blocks
         # later in __iter__ we only have to iterate over the src and tgt arrays and return them
         # src is size [number of tgts, sequence length of window, feature size]
         self.src = np.empty((num_change_points, self.window_size, feature_size), dtype=np.float32)
-        # storing the pandas dataframe of all the row that will be classified, assigned in _prepare_source
-        self.predicted_tgts = pd.DataFrame()
+        # storing the pandas dataframe of all the row that will be classified
+        self.predicted_tgts = self.data_in.loc[
+            self.data_in.loc[:, predicted_coloumn].astype(dtype="bool"), ["ObjectID", "TimeIndex"]]
 
         # translation dicts. generated from the dataset itself
         self.tgt_dict_int_to_str = {0: "NK", 1: "CK", 2: "EK", 3: "HK", 4: "FAKE"}
@@ -51,7 +49,7 @@ class SubmissionWindowDataset(IterableDataset):
         self._prepare_source(self.data_in.shape[-1])
 
         # create extra feature, showing which window is starting at index 0
-        zero_timeIndices = self.data_in.loc[self.data_in.loc[:, "PREDICTED_EW"].astype(dtype="bool"), "TimeIndex"]
+        zero_timeIndices = self.data_in.loc[self.data_in.loc[:, predicted_coloumn].astype(dtype="bool"), "TimeIndex"]
         zero_timeIndex_feature = (zero_timeIndices == 0).to_numpy().astype('float32')
 
         # bring into correct shape to add to src
@@ -61,13 +59,7 @@ class SubmissionWindowDataset(IterableDataset):
 
     def _prepare_source(self, feature_size) -> None:
 
-        if self.direction == "EW":
-            self.predicted_tgts = self.data_in.loc[
-                self.data_in.loc[:, "PREDICTED_EW"].astype(dtype="bool"), ["ObjectID", "TimeIndex"]]
-        else:
-            self.predicted_tgts = self.data_in.loc[
-                self.data_in.loc[:, "PREDICTED_NS"].astype(dtype="bool"), ["ObjectID", "TimeIndex"]]
-
+        data_only_features = self.data_in.loc[:, self.features]
         for i, (row_idx, row) in enumerate(self.predicted_tgts.iterrows()):
             objectID = row["ObjectID"]
             time_index = row["TimeIndex"]
@@ -91,7 +83,7 @@ class SubmissionWindowDataset(IterableDataset):
             assert (end_iter - start_iter) == self.window_size - 1, "Something wrong"
 
             # push window into src
-            self.src[i, :, :] = self.data_in.loc[(objectID, slice(start_iter, end_iter)), self.features].to_numpy()
+            self.src[i, :, :] = data_only_features.loc[(objectID, start_iter): (objectID, end_iter)].to_numpy()
         return
 
     def __iter__(self):
@@ -299,6 +291,7 @@ def load_data_window_ready(data_location: Path, label_location: Path, amount: in
                  "Vx (m/s)": float_size, "Vy (m/s)": float_size, "Vz (m/s)": float_size}
 
     loaded_objectIDs = []
+    loaded_dfs = []
 
     # Load out_df
     for i, data_file in enumerate(data_path):
@@ -312,9 +305,11 @@ def load_data_window_ready(data_location: Path, label_location: Path, amount: in
         # convert timestamp from str to float
         data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(float_size)
 
-        out_df = pd.concat([out_df, data_df])
+        loaded_dfs.append(data_df)
         # append to later just drop all tgts that habe not been loaded
         loaded_objectIDs.append(object_id)
+
+    out_df = pd.concat(loaded_dfs, axis=0)
 
     out_df_index = pd.MultiIndex.from_frame(out_df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
     out_df.index = out_df_index
@@ -352,6 +347,7 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
     out_df = pd.DataFrame()  # all data
     labels = pd.read_csv(label_location)  # ObjectID,TimeIndex,Direction,Node,Type
 
+    loaded_dfs = []
     # Load out_df
     for i, data_file in enumerate(data_path):
         if i == amount:
@@ -401,7 +397,9 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         merged_df['EW'].fillna(0.0, inplace=True)
         merged_df['NS'].fillna(0.0, inplace=True)
 
-        out_df = pd.concat([out_df, merged_df])
+        loaded_dfs.append(merged_df)
+
+    out_df = pd.concat(loaded_dfs, axis=0)
 
     out_df_index = pd.MultiIndex.from_frame(out_df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
     out_df.index = out_df_index
@@ -433,6 +431,7 @@ def load_first_sample(data_location: Path, label_location: Path, amount: int = -
     labels = labels.loc[labels.loc[:, "TimeIndex"] == 0, :]
 
     loaded_objectIDs = []
+    loaded_dfs = []
 
     # Load out_df
     for i, data_file in enumerate(data_path):
@@ -447,9 +446,11 @@ def load_first_sample(data_location: Path, label_location: Path, amount: int = -
         data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(float_size)
         data_df.drop(labels='Timestamp', axis=1, inplace=True)
 
-        out_df = pd.concat([out_df, data_df])
+        loaded_dfs.append(data_df)
         # append to later just drop all tgts that habe not been loaded
         loaded_objectIDs.append(object_id)
+
+    out_df = pd.concat(loaded_dfs, axis=0)
 
     labels = labels.loc[labels.loc[:, 'ObjectID'].isin(loaded_objectIDs), :]
     # just get the EW and NS direction Series, explicit copy, because pandas is crying
