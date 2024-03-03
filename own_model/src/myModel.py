@@ -14,9 +14,6 @@ from timeit import default_timer as timer
 import lightning as L
 from torchmetrics.classification import Accuracy, FBetaScore, Recall, Precision
 
-from baseline_submissions.evaluation import NodeDetectionEvaluator
-from own_model.src.dataset_manip import convert_tgts_for_eval, MyDataset
-
 
 def create_src_mask(src: Tensor, num_heads: int, device: torch.device) -> Tensor:
     batch_len: int = src.size(dim=0)
@@ -318,13 +315,14 @@ class LitClassifier(L.LightningModule):
 class LitChangePointClassifier(L.LightningModule):
     def __init__(self, sequence_len: int, feature_size: int):
         super().__init__()
+        # needed for loading model
+        self.save_hyperparameters()
 
-        self.sequence_length = sequence_len
-        self.conv1 = nn.Conv1d(in_channels=feature_size, out_channels=64, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv1d(in_channels=64, out_channels=128, kernel_size=3, padding=1)
-        self.pool = nn.MaxPool1d(kernel_size=2, stride=2)
-        # Adjust the size according to your max sequence length and conv/pool layers
-        self.fc = nn.Linear(128 * (sequence_len // 4), sequence_len)
+        self.conv1 = nn.Conv1d(in_channels=feature_size, out_channels=16, kernel_size=3, stride=1, padding=1)
+        self.relu = nn.ReLU()
+        self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
+        self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1)
+        self.fc = nn.Linear(32 * (sequence_len // 4), 1)  # Adjust size based on pooling and conv layers
 
         # maybe use average = 'macro'
         self.test_accuracy = Accuracy(task="binary")
@@ -334,18 +332,19 @@ class LitChangePointClassifier(L.LightningModule):
         self.train_f2score = FBetaScore(task="binary", beta=2.0)
         self.valid_f2score = FBetaScore(task="binary", beta=2.0)
 
-    def forward(self, x: Tensor, *args: Any, **kwargs: Any) -> Tensor:
-        # Reshape input to (batch_size, num_features, seq_length) for Conv1d
-        x = x.transpose(1, 2)
-        x = self.conv1(x)
-        x = nn.ReLU()(x)
-        x = self.pool(x)
-        x = self.conv2(x)
-        x = nn.ReLU()(x)
-        x = self.pool(x)
-        x = x.view(x.size(0), -1)  # Flatten
-        x = self.fc(x)
-        return x
+    def forward(self, src: Tensor, *args: Any, **kwargs: Any) -> Tensor:
+        # Reshape input to (batch_size, feature_size, sequence_len)
+        src = src.permute(0, 2, 1)
+        src = self.conv1(src)
+        src = self.relu(src)
+        src = self.pool(src)
+        src = self.conv2(src)
+        src = self.relu(src)
+        src = self.pool(src)
+        # Flatten for the fully connected layer
+        src = torch.flatten(src, 1)
+        src = self.fc(src)
+        return src
 
     def training_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
         loss, logits, tgt = self.single_step(batch)
@@ -376,14 +375,14 @@ class LitChangePointClassifier(L.LightningModule):
         return loss
 
     def single_step(self, batch, *args: Any, **kwargs: Any) -> Tuple[Tensor, Tensor, Tensor]:
-        src, tgt, objectIDs = batch
+        src, tgt = batch
 
         logits = self(src)
 
         logits = logits.view(logits.size(0), -1)
         tgt = tgt.squeeze(-1)
 
-        loss_fnc = nn.BCEWithLogitsLoss()
+        loss_fnc = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(10))  # Look at this again, num_neg/num_pos
         loss = loss_fnc(logits, tgt)
 
         return loss, logits, tgt

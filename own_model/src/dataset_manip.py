@@ -2,6 +2,7 @@ import warnings
 from pathlib import Path
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 import torch
 from torch.utils.data import IterableDataset
 import pandas as pd
@@ -117,9 +118,8 @@ class SubmissionWindowDataset(IterableDataset):
 
         return yield_time_series()
 
-
-def __len__(self):
-    return self.data_in.shape[0]
+    def __len__(self):
+        return self.data_in.shape[0]
 
 
 class GetWindowDataset(IterableDataset):
@@ -201,10 +201,6 @@ class GetWindowDataset(IterableDataset):
             iter_start = worker_id * per_worker
             iter_end = min(iter_start + per_worker, size)
 
-        # worker_info = torch.utils.data.get_worker_info()
-        # if worker_info is not None:
-        #     raise NotImplementedError("Only works for one worker. Sry")
-
         def yield_time_series():
             for row_idx in range(iter_start, iter_end):
                 # warning: numpy to tensor problem cuz numpy is not writable but tensor does not support that
@@ -217,6 +213,96 @@ class GetWindowDataset(IterableDataset):
                            torch.tensor([[tgt_value_int]]),
                            self.tgt.loc[row_idx, "ObjectID"],
                            self.tgt.loc[row_idx, "TimeIndex"])
+
+        return yield_time_series()
+
+    def __len__(self):
+        return self.tgt.shape[0]
+
+
+class ChangePointDataset(IterableDataset):
+    """
+        Gets a pandas dataframe with features and tgt pandas Series with Timeindices where there is a change point.
+        Creates windows around the change points which are passed to the classification model
+        TODO: revisit comment
+
+        Used in Dataloader for Changepoint classification
+    """
+
+    def __init__(self, data: pd.DataFrame, tgts: pd.Series, window_size: int, negative_to_positive_ration: int):
+        super().__init__()
+        assert data.empty is False, 'Input is empty brother'
+        if window_size % 2 == 0:
+            raise warnings.warn("I think odd window sizes is needed. Unknown behaviour maybe?")
+        self.window_size = window_size
+        self.negative_to_positive_ration = negative_to_positive_ration
+
+        self.data_in = data
+        self.tgt_in = tgts
+        self.num_pos_tgts = self.tgt_in.loc[self.tgt_in == 1].shape[0]
+        self.num_neg_tgts = self.num_pos_tgts * self.negative_to_positive_ration
+        feature_size = self.data_in.shape[-1]
+
+        self.src = np.empty((self.num_pos_tgts + self.num_neg_tgts, self.window_size, feature_size), dtype=np.float32)
+        self.tgt = np.empty((self.num_pos_tgts + self.num_neg_tgts), dtype=np.float32)
+
+        self._prepare_src_and_tgt()
+
+    def _prepare_src_and_tgt(self):
+        # windows could potentially protrude into other objectIds. The assumption is, that change points are not
+        # window_size after the first sample (quick test showed that to be true?!). Therefore, we do not care.
+
+        windows_over_data = sliding_window_view(self.data_in, self.window_size, axis=0).transpose(0, 2, 1)
+        # array is (win_size -1) / 2 smaller than tgts due to sliding window. Therefore, cut of beginning of tgts
+        offset = self.window_size - 1
+        tgts_without_offset = self.tgt_in.to_numpy(dtype=np.float32)[offset:]
+
+        assert windows_over_data.shape[0] == tgts_without_offset.shape[0]
+
+        positive_windows = windows_over_data[tgts_without_offset == 1]
+        negative_windows = windows_over_data[tgts_without_offset == 0]
+
+        # do we have more negative samples than our ratio permits?
+        if negative_windows.shape[0] > self.num_neg_tgts:
+            # random sample some windows
+            rnd_idx = np.random.choice(range(negative_windows.shape[0]), size=self.num_neg_tgts, replace=False)
+            negative_windows = negative_windows[rnd_idx, :]
+
+        src = np.concatenate([positive_windows, negative_windows], axis=0)
+        tgt = np.concatenate([np.ones(self.num_pos_tgts, dtype=np.float32),
+                              np.zeros(self.num_neg_tgts, dtype=np.float32)])
+
+        # shuffle src and tgt randomly
+        p = np.random.permutation(self.num_neg_tgts + self.num_pos_tgts)
+        self.src = src[p]
+        self.tgt = tgt[p]
+        return
+
+    def __iter__(self):
+        size = self.tgt.shape[0]  # how many rows?
+
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:  # single-process data loading, return the full iterator
+            iter_start = 0
+            iter_end = size
+        else:  # in a worker process
+            # split workload
+            per_worker = int(math.ceil(float(size) / float(worker_info.num_workers)))
+            worker_id = worker_info.id
+            iter_start = worker_id * per_worker
+            iter_end = min(iter_start + per_worker, size)
+
+        def yield_time_series():
+            for row_idx in range(iter_start, iter_end):
+                # warning: numpy to tensor problem cuz numpy is not writable but tensor does not support that
+                # -> undefined behaviour on write, but we do not write so its fine (I hope)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    src_array = self.src[row_idx, :, :]
+                    tgt_value_int = self.tgt[row_idx]
+                    yield (torch.from_numpy(src_array),
+                           # batch_size, seq_len, num_features
+                           torch.tensor(tgt_value_int).unsqueeze(0).unsqueeze(0))
 
         return yield_time_series()
 
