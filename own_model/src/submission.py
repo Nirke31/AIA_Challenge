@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import Tuple, List
 import time
-import cProfile
 
 import torch
 import lightning as L
@@ -9,18 +8,17 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import StandardScaler
 from joblib import load
+import pandas as pd
 
 from myModel import LitClassifier
 from dataset_manip import SubmissionWindowDataset
-from baseline_submissions.evaluation import NodeDetectionEvaluator
 
-import pandas as pd
 
 # INPUT/OUTPUT PATHS WITHIN THE DOCKER CONTAINER
-TRAINED_MODEL_DIR = "../trained_model/"
-TEST_DATA_DIR = "../../dataset/phase_1_v2/train/"
-TEST_PREDS_FP = "../../submission/submission.csv"
-DEBUG = True
+TRAINED_MODEL_DIR = "/trained_model/"
+TEST_DATA_DIR = "/dataset/test/"
+TEST_PREDS_FP = "/submission/submission.csv"
+DEBUG = False
 
 RF_BASE_FEATURES_EW = ["Eccentricity",
                        "Semimajor Axis (m)",
@@ -302,6 +300,7 @@ if __name__ == "__main__":
     #cProfile.run('main()')
     main()
     if DEBUG:
+        from baseline_submissions.evaluation import NodeDetectionEvaluator
         ground_truth = pd.read_csv("../../dataset/phase_1_v2/train_labels.csv")
         own = pd.read_csv("../../submission/submission.csv")
         test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
