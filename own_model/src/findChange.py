@@ -56,12 +56,13 @@ RANDOM_STATE = 42
 EPOCHS = 17
 BATCH_SIZE = 1
 SHUFFLE_DATA = False
-DIRECTION = "NS"
+DIRECTION = "EW"
+NUM_CSV_SETS = 50
 
 L.seed_everything(RANDOM_STATE, workers=True)
 
 if __name__ == "__main__":
-    df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=50)
+    df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=NUM_CSV_SETS)
     # manually remove the change point at time index 0. We know that there is a time change so we do not have to try
     # and predict it
     df.loc[df["TimeIndex"] == 0, "EW"] = 0
@@ -103,7 +104,7 @@ if __name__ == "__main__":
     train_ids, test_ids = train_test_split(object_ids,
                                            test_size=1 - TRAIN_TEST_RATIO,
                                            random_state=RANDOM_STATE)
-    rf = RandomForestClassifier(n_estimators=150, random_state=RANDOM_STATE, n_jobs=5, class_weight="balanced")
+    rf = RandomForestClassifier(n_estimators=400, random_state=RANDOM_STATE, n_jobs=5, class_weight="balanced")
 
     # features selected based on rf feature importance.
     features = BASE_FEATURES_EW if DIRECTION == "EW" else BASE_FEATURES_NS
@@ -152,9 +153,9 @@ if __name__ == "__main__":
     # fill beginning of rolling window (NaNs). Shouldn't really matter anyways? Maybe else Median
     df = df.bfill()
 
-    # scaling, just to be sure
-    df.loc[:, features] = pd.DataFrame(StandardScaler().fit_transform(df.loc[:, features]),
-                                       index=df.index, columns=features)
+    # # scaling, just to be sure
+    # df.loc[:, features] = pd.DataFrame(StandardScaler().fit_transform(df.loc[:, features]),
+    #                                    index=df.index, columns=features)
 
     test_data = df.loc[test_ids].copy()
     train_data = df.loc[train_ids].copy()
@@ -180,7 +181,7 @@ if __name__ == "__main__":
     rf.fit(train_data[features], train_data[DIRECTION])
     print(f"Took: {timer() - start_time:.3f} seconds")
     # Write classifier to disk
-    dump(rf, "../trained_model/state_classifier.joblib")
+    dump(rf, "../trained_model/state_classifier.joblib", compress=0)
 
     print("Predicting...")
     train_data["PREDICTED"] = rf.predict(train_data[features])
@@ -222,19 +223,19 @@ if __name__ == "__main__":
     print(f'F2: {f2:.2f}')
 
     # feature importance with permutation, more robust or smth like that
-    start_time = timer()
-    f2_scorer = make_scorer(fbeta_score, beta=2)
-    result = permutation_importance(rf, test_data[features], test_data[DIRECTION].to_numpy(), n_repeats=10,
-                                    random_state=RANDOM_STATE, n_jobs=1, scoring=f2_scorer)
-    elapsed_time = timer() - start_time
-    print(f"Elapsed time to compute the importances: {elapsed_time:.3f} seconds")
-    forest_importances = pd.Series(result.importances_mean, index=features)
-    fig, ax = plt.subplots()
-    forest_importances.plot.bar(yerr=result.importances_std, ax=ax)
-    ax.set_title("Feature importances using permutation on full model")
-    ax.set_ylabel("Mean accuracy decrease")
-    fig.tight_layout()
-    plt.show()
+    # start_time = timer()
+    # f2_scorer = make_scorer(fbeta_score, beta=2)
+    # result = permutation_importance(rf, test_data[features], test_data[DIRECTION].to_numpy(), n_repeats=10,
+    #                                 random_state=RANDOM_STATE, n_jobs=1, scoring=f2_scorer)
+    # elapsed_time = timer() - start_time
+    # print(f"Elapsed time to compute the importances: {elapsed_time:.3f} seconds")
+    # forest_importances = pd.Series(result.importances_mean, index=features)
+    # fig, ax = plt.subplots()
+    # forest_importances.plot.bar(yerr=result.importances_std, ax=ax)
+    # ax.set_title("Feature importances using permutation on full model")
+    # ax.set_ylabel("Mean accuracy decrease")
+    # fig.tight_layout()
+    # plt.show()
 
     # plot feature importance
     # importances = rf.feature_importances_
