@@ -11,9 +11,8 @@ from torch import Tensor
 import torch.nn as nn
 from dataset_manip import load_data, split_train_test, pad_sequence_vec
 from changeforest import changeforest
+from sklearn.preprocessing import StandardScaler
 from baseline_submissions.evaluation import NodeDetectionEvaluator
-
-# https://eval.ai/web/challenges/challenge-page/2164/overview
 
 train_data_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train"
 train_label_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv"
@@ -95,12 +94,12 @@ train_label_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/
 # plt.show()
 
 # unique node and type combinations for reconstruction from type label
-df = pd.read_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
-df.index = pd.MultiIndex.from_frame(df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
-df = df.drop(["ObjectID", "TimeIndex"], axis=1)
-df_EW = df[df["Direction"] == "EW"]
-df_EW = df_EW.drop_duplicates()
-print(df_EW)  # 'Node' != SS
+# df = pd.read_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
+# df.index = pd.MultiIndex.from_frame(df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
+# df = df.drop(["ObjectID", "TimeIndex"], axis=1)
+# df_EW = df[df["Direction"] == "EW"]
+# df_EW = df_EW.drop_duplicates()
+# print(df_EW)  # 'Node' != SS
 
 # from this follows. First change point at position 27+sd6.l
 # df = df.drop("TimeIndex", axis=1)
@@ -117,3 +116,90 @@ print(df_EW)  # 'Node' != SS
 # for id in object_ids:
 #     eval.plot(id)
 
+# df = pd.read_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
+# num_all = 1900
+# df = df[df["Node"] != "SS"]
+# df = df[df["Node"] != "ES"]
+# uniqueOBIS = df["ObjectID"].unique()
+# uniqueEW = df.loc[df["Direction"] == "EW", :].loc[:, "ObjectID"].unique()
+# uniqueNS = df.loc[df["Direction"] == "NS", :].loc[:, "ObjectID"].unique()
+# print(len(uniqueOBIS))
+# print(len(uniqueEW))
+# print(len(uniqueNS))
+# print(num_all/len(uniqueOBIS))
+# print(num_all/len(uniqueEW))
+# print(num_all/len(uniqueNS))
+
+# df = pd.read_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
+# df = df[df["Node"] != "ES"]
+# df = df[df["Node"] != "SS"]
+# df = df[df["Direction"] == "NS"]
+# df = df["TimeIndex"].value_counts()
+# df.sort_index(inplace=True)
+# df.plot(kind='bar')
+# plt.show()
+
+# for id in range(1000, 1200):
+#     data_df = pd.read_csv(train_data_str + f"/{id}.csv")
+#     labels = pd.read_csv(train_label_str)
+#     data_df.drop(labels='Timestamp', axis=1, inplace=True)
+#     data_df['TimeIndex'] = range(len(data_df))
+#
+#     # Add EW and NS nodes to data. They are extracted from the labels and converted to integers
+#     ground_truth_object = labels[labels['ObjectID'] == id].copy()
+#     ground_truth_object.drop(labels='ObjectID', axis=1, inplace=True)
+#     # Separate the 'EW' and 'NS' types in the ground truth
+#     ground_truth_EW = ground_truth_object[ground_truth_object['Direction'] == 'EW'].copy()
+#     ground_truth_NS = ground_truth_object[ground_truth_object['Direction'] == 'NS'].copy()
+#
+#     # Create 'EW' and 'NS' labels and fill 'unknown' values
+#     ground_truth_EW['EW'] = 1.0
+#     ground_truth_NS['NS'] = 1.0
+#
+#     ground_truth_EW.drop(['Node', 'Type', 'Direction'], axis=1, inplace=True)
+#     ground_truth_NS.drop(['Node', 'Type', 'Direction'], axis=1, inplace=True)
+#
+#     # Merge the input data with the ground truth
+#     merged_df = pd.merge(data_df,
+#                          ground_truth_EW.sort_values('TimeIndex'),
+#                          on=['TimeIndex'],
+#                          how='left')
+#     merged_df = pd.merge_ordered(merged_df,
+#                                  ground_truth_NS.sort_values('TimeIndex'),
+#                                  on=['TimeIndex'],
+#                                  how='left')
+#
+#     indecies = merged_df[merged_df['EW'] == 1].index
+#     # Fill 'unknown' values in 'EW' and 'NS' columns that come before the first valid observation
+#     merged_df['EW'].fillna(0.0, inplace=True)
+#     merged_df['NS'].fillna(0.0, inplace=True)
+#     merged_df.drop(["TimeIndex", "X (m)", "Y (m)", "Z (m)", "Vx (m/s)", "Vy (m/s)", "Vz (m/s)"], axis=1,
+#                    inplace=True)
+#     engineered_features_ew = {
+#         ("var", lambda x: x.rolling(window=6).var()):
+#             ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+#         ("std", lambda x: x.rolling(window=6).std()):
+#             ["Semimajor Axis (m)"],  # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
+#         ("skew", lambda x: x.rolling(window=6).skew()):
+#             ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
+#         ("kurt", lambda x: x.rolling(window=6).kurt()):
+#             ["Eccentricity", "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"],
+#         ("sem", lambda x: x.rolling(window=6).sem()):
+#             ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+#     }
+#     for (math_type, lambda_fnc), feature_list in engineered_features_ew.items():
+#         for feature in feature_list:
+#             new_feature_name = feature + "_" + math_type + "_EW"
+#
+#             merged_df[new_feature_name] = lambda_fnc(merged_df[feature])
+#     merged_df = merged_df.bfill()
+#
+#     merged_df = pd.DataFrame(StandardScaler().fit_transform(merged_df), index=merged_df.index, columns=merged_df.columns)
+#     test = merged_df.plot(subplots=True, title=id)
+#     plt.show()
+
+df = load_data(Path(train_data_str), Path(train_label_str), -1)
+df = pd.DataFrame(StandardScaler().fit_transform(df), index=df.index, columns=df.columns)
+df.drop(["EW", "NS", "TimeIndex", "ObjectID"], axis=1, inplace=True)
+df.hist(bins=15)
+plt.show()
