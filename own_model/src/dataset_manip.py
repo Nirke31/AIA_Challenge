@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 import torch
-from torch.utils.data import IterableDataset
+from torch.utils.data import IterableDataset, Dataset
 import pandas as pd
 import math
 
@@ -220,7 +220,7 @@ class GetWindowDataset(IterableDataset):
         return self.tgt.shape[0]
 
 
-class ChangePointDataset(IterableDataset):
+class ChangePointDataset(Dataset):
     """
         Gets a pandas dataframe with features and tgt pandas Series with Timeindices where there is a change point.
         Creates windows around the change points which are passed to the classification model
@@ -229,82 +229,69 @@ class ChangePointDataset(IterableDataset):
         Used in Dataloader for Changepoint classification
     """
 
-    def __init__(self, data: pd.DataFrame, tgts: pd.Series, window_size: int, negative_to_positive_ration: int):
+    def __init__(self, data: pd.DataFrame, tgts: pd.Series, idx: np.array, window_size: int):
+        """
+
+        Args:
+            data: dataframe with all rows and coloumns.
+            tgts: Series with all rows
+            idx: np array with indices to access the correct rows from data and tgts
+            window_size: size of the window
+        """
         super().__init__()
         assert data.empty is False, 'Input is empty brother'
         if window_size % 2 == 0:
             raise warnings.warn("I think odd window sizes is needed. Unknown behaviour maybe?")
         self.window_size = window_size
-        self.negative_to_positive_ration = negative_to_positive_ration
 
         self.data_in = data
         self.tgt_in = tgts
-        self.num_pos_tgts = self.tgt_in.loc[self.tgt_in == 1].shape[0]
-        self.num_neg_tgts = self.num_pos_tgts * self.negative_to_positive_ration
+        self.idx = idx
         feature_size = self.data_in.shape[-1]
 
-        self.src = np.empty((self.num_pos_tgts + self.num_neg_tgts, self.window_size, feature_size), dtype=np.float32)
-        self.tgt = np.empty((self.num_pos_tgts + self.num_neg_tgts), dtype=np.float32)
+        self.src = np.empty((self.idx.shape[0], self.window_size, feature_size), dtype=np.float32)
+        self.tgt = np.empty(self.idx.shape[0], dtype=np.float32)
 
         self._prepare_src_and_tgt()
 
     def _prepare_src_and_tgt(self):
-        # windows could potentially protrude into other objectIds. The assumption is, that change points are not
-        # window_size after the first sample (quick test showed that to be true?!). Therefore, we do not care.
 
-        windows_over_data = sliding_window_view(self.data_in, self.window_size, axis=0).transpose(0, 2, 1)
-        # array is (win_size -1) / 2 smaller than tgts due to sliding window. Therefore, cut of beginning of tgts
+        # sliding_window_view returns window - 1 smaller than tgts due to sliding window
         offset = self.window_size - 1
-        tgts_without_offset = self.tgt_in.to_numpy(dtype=np.float32)[offset:]
+        groups = self.data_in.groupby(level=0, group_keys=False)
 
-        assert windows_over_data.shape[0] == tgts_without_offset.shape[0]
+        all_padded_windows = []
+        for objectID, group in groups:
+            # np.sliding_window_view does not have a window=centre option. Therefore, I have to manually center windows.
+            # Done via index.
+            num_pad_before = offset
+            num_pad_after = int(offset / 2)
+            padded_seq = np.pad(group.to_numpy(), ((num_pad_before, num_pad_after), (0, 0)),
+                                'constant', constant_values=(0, 0))
+            windows_over_data = sliding_window_view(padded_seq, self.window_size, axis=0).transpose(0, 2, 1)
+            windows_over_data = windows_over_data[int(offset / 2):]
 
-        positive_windows = windows_over_data[tgts_without_offset == 1]
-        negative_windows = windows_over_data[tgts_without_offset == 0]
+            all_padded_windows.append(windows_over_data)
 
-        # do we have more negative samples than our ratio permits?
-        if negative_windows.shape[0] > self.num_neg_tgts:
-            # random sample some windows
-            rnd_idx = np.random.choice(range(negative_windows.shape[0]), size=self.num_neg_tgts, replace=False)
-            negative_windows = negative_windows[rnd_idx, :]
+        all_windows = np.concatenate(all_padded_windows, axis=0, dtype=np.float32)
 
-        src = np.concatenate([positive_windows, negative_windows], axis=0)
-        tgt = np.concatenate([np.ones(self.num_pos_tgts, dtype=np.float32),
-                              np.zeros(self.num_neg_tgts, dtype=np.float32)])
+        # I just have a window over every row of data_in. tgts can be accessed via self.idx now
+        assert all_windows.shape[0] == self.data_in.shape[0]
 
-        # shuffle src and tgt randomly
-        p = np.random.permutation(self.num_neg_tgts + self.num_pos_tgts)
-        self.src = src[p]
-        self.tgt = tgt[p]
+        self.src = all_windows[self.idx]
+        self.tgt = self.tgt_in[self.idx]
+
         return
 
-    def __iter__(self):
-        size = self.tgt.shape[0]  # how many rows?
+    def __getitem__(self, item):
+        return (torch.tensor(self.src[np.array(item), :, :], dtype=torch.float32),
+                torch.tensor(self.tgt[np.array(item)], dtype=torch.float32).unsqueeze(0).unsqueeze(0))
 
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is None:  # single-process data loading, return the full iterator
-            iter_start = 0
-            iter_end = size
-        else:  # in a worker process
-            # split workload
-            per_worker = int(math.ceil(float(size) / float(worker_info.num_workers)))
-            worker_id = worker_info.id
-            iter_start = worker_id * per_worker
-            iter_end = min(iter_start + per_worker, size)
-
-        def yield_time_series():
-            for row_idx in range(iter_start, iter_end):
-                # warning: numpy to tensor problem cuz numpy is not writable but tensor does not support that
-                # -> undefined behaviour on write, but we do not write so its fine (I hope)
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    src_array = self.src[row_idx, :, :]
-                    tgt_value_int = self.tgt[row_idx]
-                    yield (torch.from_numpy(src_array),
-                           # batch_size, seq_len, num_features
-                           torch.tensor(tgt_value_int).unsqueeze(0).unsqueeze(0))
-
-        return yield_time_series()
+    # IDK if this is really "faster", but I am not allowed to just return a tensor/view...
+    def __getitems__(self, items):
+        return [(torch.tensor(self.src[np.array(item), :, :], dtype=torch.float32),
+                 torch.tensor(self.tgt[np.array(item)], dtype=torch.float32).unsqueeze(0).unsqueeze(0))
+                for item in items]
 
     def __len__(self):
         return self.tgt.shape[0]
@@ -470,14 +457,21 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
                                      on=['TimeIndex', 'ObjectID'],
                                      how='left')
 
-        indecies = merged_df[merged_df['EW'] == 1].index
+        indices = merged_df[merged_df['EW'] == 1].index
+        seq_len = len(data_df)
+        for idx in indices[1:]:
+            puffer = 6
+            start = idx - puffer if idx - puffer >= 0 else 0
+            end = idx + puffer if idx + puffer <= seq_len else seq_len
+            merged_df.loc[start:end, "EW"] = 1
 
-        # seq_len = len(data_df)
-        # for idx in indecies:
-        #     puffer = 6
-        #     start = idx - puffer if idx - puffer >= 0 else 0
-        #     end = idx + puffer if idx + puffer <= seq_len else seq_len
-        #     merged_df.loc[start:end, "EW"] = 1
+        indices = merged_df[merged_df["NS"] == 1].index
+        seq_len = len(data_df)
+        for idx in indices[1:]:
+            puffer = 6
+            start = idx - puffer if idx - puffer >= 0 else 0
+            end = idx + puffer if idx + puffer <= seq_len else seq_len
+            merged_df.loc[start:end, "NS"] = 1
 
         # Fill 'unknown' values in 'EW' and 'NS' columns that come before the first valid observation
         merged_df['EW'].fillna(0.0, inplace=True)
@@ -486,6 +480,7 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         loaded_dfs.append(merged_df)
 
     out_df = pd.concat(loaded_dfs, axis=0)
+    out_df = out_df.astype({"EW": "float32", "NS": "float32"})
 
     out_df_index = pd.MultiIndex.from_frame(out_df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
     out_df.index = out_df_index
