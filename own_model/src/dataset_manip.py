@@ -1,14 +1,12 @@
+import math
 import warnings
 from pathlib import Path
+from typing import Tuple, List
 
 import numpy as np
-from numpy.lib.stride_tricks import sliding_window_view
+import pandas as pd
 import torch
 from torch.utils.data import IterableDataset, Dataset
-import pandas as pd
-import math
-
-from typing import Tuple, Dict, List
 
 
 class SubmissionWindowDataset(IterableDataset):
@@ -222,16 +220,11 @@ class GetWindowDataset(IterableDataset):
 
 class ChangePointDataset(Dataset):
     """
-        Gets a pandas dataframe with features and tgt pandas Series with Timeindices where there is a change point.
-        Creates windows around the change points which are passed to the classification model
-        TODO: revisit comment
 
-        Used in Dataloader for Changepoint classification
     """
 
-    def __init__(self, data: pd.DataFrame, tgts: pd.Series, idx: np.array, window_size: int):
+    def __init__(self, data: pd.DataFrame, tgts: pd.Series, window_size: int):
         """
-
         Args:
             data: dataframe with all rows and coloumns.
             tgts: Series with all rows
@@ -243,55 +236,52 @@ class ChangePointDataset(Dataset):
         if window_size % 2 == 0:
             raise warnings.warn("I think odd window sizes is needed. Unknown behaviour maybe?")
         self.window_size = window_size
+        self.feature_size = data.shape[-1]
 
-        self.data_in = data
-        self.tgt_in = tgts
-        self.idx = idx
-        feature_size = self.data_in.shape[-1]
+        self.src = data.sort_index()  # sorting makes stuff go faster cuz hashing ?!
+        self.tgt = tgts.to_numpy(dtype=np.float32)
+        # holds indices for window and fast access for get_item
+        self.lookup_table = np.empty((self.src.shape[0], 4), dtype=np.int32)
 
-        self.src = np.empty((self.idx.shape[0], self.window_size, feature_size), dtype=np.float32)
-        self.tgt = np.empty(self.idx.shape[0], dtype=np.float32)
+        self._prepare_source()
 
-        self._prepare_src_and_tgt()
+    def _prepare_source(self):
+        self.src["idx"] = range(self.src.shape[0])
+        half_window = (self.window_size - 1) // 2
 
-    def _prepare_src_and_tgt(self):
+        def get_indices(row: pd.Series):
+            objectID, timeIndex = row.name
+            item = int(row["idx"])
+            seq_len = self.src.loc[objectID].shape[0]
 
-        # sliding_window_view returns window - 1 smaller than tgts due to sliding window
-        offset = self.window_size - 1
-        groups = self.data_in.groupby(level=0, group_keys=False)
+            # Calculate start and end indexes of the window
+            start_step = max(0, timeIndex - half_window)
+            end_step = min(seq_len, timeIndex + half_window + 1)
 
-        all_padded_windows = []
-        for objectID, group in groups:
-            # np.sliding_window_view does not have a window=centre option. Therefore, I have to manually center windows.
-            # Done via index.
-            num_pad_before = offset
-            num_pad_after = int(offset / 2)
-            padded_seq = np.pad(group.to_numpy(), ((num_pad_before, num_pad_after), (0, 0)),
-                                'constant', constant_values=(0, 0))
-            windows_over_data = sliding_window_view(padded_seq, self.window_size, axis=0).transpose(0, 2, 1)
-            windows_over_data = windows_over_data[int(offset / 2):]
+            win_start_idx = half_window - (timeIndex - start_step)
+            win_end_idx = win_start_idx + (end_step - start_step)
 
-            all_padded_windows.append(windows_over_data)
+            # translate to idx
+            start_step = item - (timeIndex - start_step)
+            end_step = item + (end_step - timeIndex)
 
-        all_windows = np.concatenate(all_padded_windows, axis=0, dtype=np.float32)
+            return [win_start_idx, win_end_idx, start_step, end_step]
 
-        # I just have a window over every row of data_in. tgts can be accessed via self.idx now
-        assert all_windows.shape[0] == self.data_in.shape[0]
+        self.lookup_table = np.array(self.src.apply(get_indices, axis=1, result_type='expand'))
 
-        self.src = all_windows[self.idx]
-        self.tgt = self.tgt_in[self.idx]
+        self.src.drop("idx", axis=1, inplace=True)
+        self.src = self.src.to_numpy(dtype=np.float32)
 
         return
 
     def __getitem__(self, item):
-        return (torch.tensor(self.src[np.array(item), :, :], dtype=torch.float32),
-                torch.tensor(self.tgt[np.array(item)], dtype=torch.float32).unsqueeze(0).unsqueeze(0))
+        # win_start_idx, win_end_idx, start_step, end_step
+        indices = self.lookup_table[item]
+        window = np.zeros((self.window_size, self.feature_size), dtype=np.float32)
+        window[indices[0]:indices[1]] = self.src[indices[2]:indices[3], :]
 
-    # IDK if this is really "faster", but I am not allowed to just return a tensor/view...
-    def __getitems__(self, items):
-        return [(torch.tensor(self.src[np.array(item), :, :], dtype=torch.float32),
-                 torch.tensor(self.tgt[np.array(item)], dtype=torch.float32).unsqueeze(0).unsqueeze(0))
-                for item in items]
+        return (torch.from_numpy(window),
+                torch.tensor(self.tgt[item]).unsqueeze(0).unsqueeze(0))
 
     def __len__(self):
         return self.tgt.shape[0]
@@ -376,7 +366,8 @@ def load_data_window_ready(data_location: Path, label_location: Path, amount: in
         data_df['ObjectID'] = object_id
         data_df['TimeIndex'] = range(len(data_df))
         # convert timestamp from str to float
-        data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(float_size)
+        data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(
+            float_size)
 
         loaded_dfs.append(data_df)
         # append to later just drop all tgts that habe not been loaded
@@ -430,7 +421,8 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         data_df['ObjectID'] = int(data_file.stem)  # csv is named after its objectID/other way round
         data_df['TimeIndex'] = range(len(data_df))
         # convert timestamp from str to float
-        data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(float_size)
+        data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(
+            float_size)
         data_df.drop(labels='Timestamp', axis=1, inplace=True)
 
         # Add EW and NS nodes to data. They are extracted from the labels and converted to integers
@@ -490,7 +482,8 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
     return out_df
 
 
-def load_first_sample(data_location: Path, label_location: Path, amount: int = -1) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def load_first_sample(data_location: Path, label_location: Path, amount: int = -1) -> Tuple[
+    pd.DataFrame, pd.DataFrame]:
     data_path = data_location.glob('*.csv')
     label_path = label_location.glob('*.csv')
     # Check if data_location is empty
@@ -524,7 +517,8 @@ def load_first_sample(data_location: Path, label_location: Path, amount: int = -
         data_df['ObjectID'] = object_id
         data_df['TimeIndex'] = range(len(data_df))
         # convert timestamp from str to float
-        data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(float_size)
+        data_df['Timestamp'] = (pd.to_datetime(data_df['Timestamp'])).apply(lambda x: x.timestamp()).astype(
+            float_size)
         data_df.drop(labels='Timestamp', axis=1, inplace=True)
 
         loaded_dfs.append(data_df)

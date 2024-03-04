@@ -1,5 +1,6 @@
 import math
 import pickle
+import time
 from pathlib import Path
 from timeit import default_timer as timer
 
@@ -18,7 +19,7 @@ from sklearn.inspection import permutation_importance
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
-from own_model.src.dataset_manip import load_data, state_change_eval, MyDataset, ChangePointDataset
+from own_model.src.dataset_manip import load_data, state_change_eval, MyDataset, ChangePointDataset, split_train_test
 from own_model.src.myModel import LitChangePointClassifier
 
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
@@ -54,11 +55,11 @@ BASE_FEATURES_NS = ["Eccentricity",
 
 TRAIN_TEST_RATIO = 0.8
 RANDOM_STATE = 42
-NUM_WORKERS = 2
+NUM_WORKERS = 4
 EPOCHS = 200
-BATCH_SIZE = 1
+BATCH_SIZE = 1024
 SHUFFLE_DATA = False
-WINDOW_SIZE = 25
+WINDOW_SIZE = 51
 DIRECTION = "EW"
 NUM_CSV_SETS = -1
 
@@ -77,20 +78,26 @@ def main():
 
     # features, leaves room for potential feature engineering
     features = BASE_FEATURES_EW if DIRECTION == "EW" else BASE_FEATURES_NS
-    # Scale, yes I am leaking, would be way more complicated to not leak. Maybe change later anyways?
-    scaler = StandardScaler()
-    df.loc[:, features] = pd.DataFrame(scaler.fit_transform(df.loc[:, features]), index=df.index, columns=features)
-
     print("Dataset loaded")
 
-    # split train test, DATA IS SHUFFLED!
-    labels = df.loc[:, DIRECTION].to_numpy()
-    indices = np.arange(labels.shape[0])
-    idx_train, idx_val = train_test_split(indices, train_size=TRAIN_TEST_RATIO, stratify=labels)
+    # splitting. This splitting has the big problem that I cannot really control how many positive samples are
+    # in train and test set. If I am unlucky, all are in one of the two.
+    objectIDs = df.index.get_level_values(0).unique()
+    objID_train, objID_test = train_test_split(objectIDs, train_size=TRAIN_TEST_RATIO)
+
+    df_train, df_test = split_train_test(df, TRAIN_TEST_RATIO, random_state=RANDOM_STATE)
+
+    scaler = StandardScaler()
+    df_train.loc[:, features] = pd.DataFrame(scaler.fit_transform(df_train.loc[:, features]),
+                                             index=df_train.index, columns=features)
+    df_test.loc[:, features] = pd.DataFrame(scaler.transform(df_test.loc[:, features]),
+                                            index=df_test.index, columns=features)
 
     # load dataset and dataloader
-    ds_train = ChangePointDataset(df.loc[:, features], labels, idx_train, WINDOW_SIZE)
-    ds_test = ChangePointDataset(df.loc[:, features], labels, idx_val, WINDOW_SIZE)
+    start_time = time.perf_counter()
+    ds_train = ChangePointDataset(df_train.loc[:, features], df_train.loc[:, DIRECTION], WINDOW_SIZE)
+    ds_test = ChangePointDataset(df_test.loc[:, features], df_test.loc[:, DIRECTION], WINDOW_SIZE)
+    print(f"Time: {time.perf_counter() - start_time:4.0f}sec - for dataset to load")
 
     # Create random sampler to sample more positives than negatives
     num_samples = ds_train.tgt.shape[0]
@@ -102,10 +109,10 @@ def main():
     sampler = WeightedRandomSampler(weights=weights, num_samples=num_samples)
 
     dataloader_train = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA, num_workers=NUM_WORKERS,
-                                  persistent_workers=True, pin_memory=False, sampler=sampler)
+                                  persistent_workers=True, pin_memory=True, sampler=sampler)
     # For val (and test) we do not need a sampler because we just look at all values once
     dataloader_val = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA, num_workers=NUM_WORKERS,
-                                persistent_workers=True, pin_memory=False)
+                                persistent_workers=True, pin_memory=True)
     dataloader_test = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA,
                                  num_workers=NUM_WORKERS)  # bit of leftover
 
