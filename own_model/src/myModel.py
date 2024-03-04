@@ -4,7 +4,9 @@ from typing import Optional, List, Callable, Any, Tuple
 import numpy as np
 import pandas as pd
 import torch
+import torchmetrics
 from lightning.pytorch.utilities.types import STEP_OUTPUT, OptimizerLRScheduler
+from matplotlib import pyplot as plt
 from torch import Tensor
 from torch.utils.data import DataLoader
 import torch.nn as nn
@@ -12,7 +14,8 @@ import torch.nn.functional as F
 import math
 from timeit import default_timer as timer
 import lightning as L
-from torchmetrics.classification import Accuracy, FBetaScore, Recall, Precision
+from torchmetrics.classification import Accuracy, FBetaScore, Recall, Precision, BinaryPrecisionRecallCurve
+from torchmetrics import MetricCollection
 
 
 def create_src_mask(src: Tensor, num_heads: int, device: torch.device) -> Tensor:
@@ -318,19 +321,30 @@ class LitChangePointClassifier(L.LightningModule):
         # needed for loading model
         self.save_hyperparameters()
 
-        self.conv1 = nn.Conv1d(in_channels=feature_size, out_channels=16, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv1d(in_channels=feature_size, out_channels=32, kernel_size=3, stride=1, padding=1)
         self.relu = nn.ReLU()
         self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
-        self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1)
-        self.fc = nn.Linear(32 * (sequence_len // 4), 1)  # Adjust size based on pooling and conv layers
+        self.conv2 = nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
+        self.fc = nn.Linear(64 * (sequence_len // 4), 1)  # Adjust size based on pooling and conv layers
 
-        # maybe use average = 'macro'
-        self.test_accuracy = Accuracy(task="binary")
-        self.test_recall = Recall(task="binary")
-        self.test_precision = Precision(task="binary")
-        self.test_f2score = FBetaScore(task="binary", beta=2.0)
-        self.train_f2score = FBetaScore(task="binary", beta=2.0)
-        self.valid_f2score = FBetaScore(task="binary", beta=2.0)
+        # metrics
+        metric = MetricCollection([Accuracy(task="binary"),
+                                   Recall(task="binary"),
+                                   Precision(task="binary"),
+                                   FBetaScore(task="binary", beta=2.0)])
+        self.train_metrics = metric.clone(prefix="train_")
+        self.val_metrics = metric.clone(prefix="val_")
+        self.test_metrics = metric.clone(prefix="test_")
+        # extra because returning value pairs and not a single scalar
+        self.test_BPRC = BinaryPrecisionRecallCurve()
+
+        # Define tracker over the collection to easy keep track of the metrics over multiple epochs
+        self.train_tracker = torchmetrics.wrappers.MetricTracker(self.train_metrics)
+        self.val_tracker = torchmetrics.wrappers.MetricTracker(self.val_metrics)
+
+    def configure_optimizers(self) -> OptimizerLRScheduler:
+        optimizer = torch.optim.Adam(self.parameters())
+        return optimizer
 
     def forward(self, src: Tensor, *args: Any, **kwargs: Any) -> Tensor:
         # Reshape input to (batch_size, feature_size, sequence_len)
@@ -351,7 +365,11 @@ class LitChangePointClassifier(L.LightningModule):
 
         # log stuff
         self.log('train_loss', loss)
-        self.log('train_f2', self.train_f2score(logits, tgt), prog_bar=True)
+        metrics = self.train_metrics(logits, tgt)
+        self.log_dict(metrics, prog_bar=True)
+
+        # tracker for plots after training finished
+        self.train_tracker.update(logits, tgt)
 
         return loss
 
@@ -360,18 +378,22 @@ class LitChangePointClassifier(L.LightningModule):
 
         # log stuff
         self.log('val_loss', loss)
-        self.log('val_f2', self.valid_f2score(logits, tgt))
+        metrics = self.val_metrics(logits, tgt)
+        self.log_dict(metrics)
+
+        # tracker for plots after training finished
+        self.val_tracker.update(logits, tgt)
+
         return loss
 
     def test_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
         loss, logits, tgt = self.single_step(batch)
 
         # log stuff
-        self.log('test_loss', loss)
-        self.log('test_acc', self.test_accuracy(logits, tgt))
-        self.log('test_recall', self.test_recall(logits, tgt))
-        self.log('test_precision', self.test_precision(logits, tgt))
-        self.log('test_f2', self.test_f2score(logits, tgt))
+        metrics = self.test_metrics(logits, tgt)
+        self.test_BPRC.update(logits, tgt.to(dtype=torch.int))
+        self.log_dict(metrics, prog_bar=True)
+
         return loss
 
     def single_step(self, batch, *args: Any, **kwargs: Any) -> Tuple[Tensor, Tensor, Tensor]:
@@ -382,11 +404,33 @@ class LitChangePointClassifier(L.LightningModule):
         logits = logits.view(logits.size(0), -1)
         tgt = tgt.squeeze(-1)
 
-        loss_fnc = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(10))  # Look at this again, num_neg/num_pos
+        loss_fnc = nn.BCEWithLogitsLoss()  # Look at this again, num_neg/num_pos
         loss = loss_fnc(logits, tgt)
 
         return loss, logits, tgt
 
-    def configure_optimizers(self) -> OptimizerLRScheduler:
-        optimizer = torch.optim.Adam(self.parameters())
-        return optimizer
+    def on_train_epoch_start(self) -> None:
+        # initialize a new metric for being tracked - for this epoch I think
+        self.train_tracker.increment()
+
+    def on_validation_epoch_start(self) -> None:
+        # initialize a new metric for being tracked - for this epoch I think
+        self.val_tracker.increment()
+
+    def on_validation_epoch_end(self) -> None:
+        output = self.val_metrics.compute()
+        self.log_dict(output)
+        self.val_metrics.reset()
+
+    def on_test_end(self) -> None:
+        # Plot Binary precision recall curve
+        self.test_BPRC.plot()
+
+        # train and val trackers
+        all_train_results = self.train_tracker.compute_all()
+        all_val_results = self.val_tracker.compute_all()
+        self.train_tracker.plot(val=all_train_results)
+        self.val_tracker.plot(val=all_val_results)
+
+        plt.show()
+        self.val_metrics.reset()
