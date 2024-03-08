@@ -13,22 +13,23 @@ import pandas as pd
 from myModel import LitClassifier
 from dataset_manip import SubmissionWindowDataset
 
-
 # INPUT/OUTPUT PATHS WITHIN THE DOCKER CONTAINER
-TRAINED_MODEL_DIR = "/trained_model/"
-TEST_DATA_DIR = "/dataset/test/"
-TEST_PREDS_FP = "/submission/submission.csv"
 DEBUG = False
 
-RF_BASE_FEATURES_EW = ["Eccentricity",
-                       "Semimajor Axis (m)",
-                       "Inclination (deg)",
+if DEBUG:
+    TRAINED_MODEL_DIR = "../trained_model/"
+    TEST_DATA_DIR = "../../dataset/phase_1_v2/train/"
+    TEST_PREDS_FP = "../../submission/submission.csv"
+else:
+    TRAINED_MODEL_DIR = "/trained_model/"
+    TEST_DATA_DIR = "/dataset/test/"
+    TEST_PREDS_FP = "/submission/submission.csv"
+
+RF_BASE_FEATURES_EW = ["Inclination (deg)",
                        "RAAN (deg)",
                        "Argument of Periapsis (deg)",
                        "True Anomaly (deg)",
-                       "Latitude (deg)",
                        "Longitude (deg)",
-                       "Altitude (m)",
                        ]
 
 RF_BASE_FEATURES_NS = ["Eccentricity",
@@ -57,12 +58,12 @@ CLASSIFIER_FEATURES_EW = ["Eccentricity",
                           "Latitude (deg)",
                           "Longitude (deg)",
                           "Altitude (m)",
-                          "X (m)",
-                          "Y (m)",
-                          "Z (m)",
-                          "Vx (m/s)",
-                          "Vy (m/s)",
-                          "Vz (m/s)"
+                          # "X (m)",
+                          # "Y (m)",
+                          # "Z (m)",
+                          # "Vx (m/s)",
+                          # "Vy (m/s)",
+                          # "Vz (m/s)"
                           ]
 
 CLASSIFIER_FEATURES_NS = ["Eccentricity",
@@ -74,12 +75,12 @@ CLASSIFIER_FEATURES_NS = ["Eccentricity",
                           "Latitude (deg)",
                           "Longitude (deg)",
                           "Altitude (m)",
-                          "X (m)",
-                          "Y (m)",
-                          "Z (m)",
-                          "Vx (m/s)",
-                          "Vy (m/s)",
-                          "Vz (m/s)"
+                          # "X (m)",
+                          # "Y (m)",
+                          # "Z (m)",
+                          # "Vx (m/s)",
+                          # "Vy (m/s)",
+                          # "Vz (m/s)"
                           ]
 
 
@@ -87,16 +88,17 @@ def add_EW_features(data: pd.DataFrame, features_in: List[str], window_size: int
     features_ew = features_in.copy()
     # features selected based on rf feature importance
     engineered_features = {
-        ("var", lambda x: x.rolling(window=window_size).var()):
-            ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+        # ("var", lambda x: x.rolling(window=window_size).var()):
+        #     ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
         ("std", lambda x: x.rolling(window=window_size).std()):
-            ["Semimajor Axis (m)"],  # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
-        ("skew", lambda x: x.rolling(window=window_size).skew()):
-            ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
-        ("kurt", lambda x: x.rolling(window=window_size).kurt()):
-            ["Eccentricity", "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"],
-        ("sem", lambda x: x.rolling(window=window_size).sem()):
-            ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+            ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],
+        # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
+        # ("skew", lambda x: x.rolling(window=window_size).skew()):
+        #     ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
+        # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
+        #     ["Eccentricity"],  # , "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"
+        # ("sem", lambda x: x.rolling(window=window_size).sem()):
+        #     ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
     }
 
     # FEATURE ENGINEERING
@@ -114,16 +116,17 @@ def add_NS_features(data: pd.DataFrame, features_in: List[str], window_size: int
     features_ns = features_in.copy()
     # features selected based on rf feature importance
     engineered_features = {
-        ("var", lambda x: x.rolling(window=window_size).var()):
-            ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+        # ("var", lambda x: x.rolling(window=window_size).var()):
+        #     ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
         ("std", lambda x: x.rolling(window=window_size).std()):
-            ["Semimajor Axis (m)"],  # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
-        ("skew", lambda x: x.rolling(window=window_size).skew()):
-            ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
+            ["Semimajor Axis (m)", "Latitude (deg)", "Vz (m/s)", "Z (m)", "RAAN (deg)", "Inclination (deg)"],
+        # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
+        # ("skew", lambda x: x.rolling(window=window_size).skew()):
+        #     ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
         # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
         #     ["Eccentricity", "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"],
-        ("sem", lambda x: x.rolling(window=window_size).sem()):
-            ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+        # ("sem", lambda x: x.rolling(window=window_size).sem()):
+        #     ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
     }
 
     # FEATURE ENGINEERING
@@ -156,10 +159,24 @@ def load_test_data_and_preprocess(filepath: Path) -> Tuple[pd.DataFrame, List[st
 
     # loaded, now create EW and NS dataframe and features
     data, rf_features_ew = add_EW_features(merged_data, RF_BASE_FEATURES_EW, 6)
-    data, rf_features_ns = add_NS_features(data, RF_BASE_FEATURES_NS, 3)
+    data, rf_features_ns = add_NS_features(data, RF_BASE_FEATURES_NS, 6)
     data = data.bfill()
 
     return data, rf_features_ew, rf_features_ns
+
+
+def changepoint_postprocessing(df: pd.DataFrame, window_size: int) -> pd.DataFrame:
+    # post processing
+    df["PREDICTED_SUM_EW"] = df["PREDICTED_EW"].rolling(window_size, center=True).sum()
+    df["PREDICTED_SUM_NS"] = df["PREDICTED_NS"].rolling(window_size, center=True).sum()
+    df["PREDICTED_CLEAN_EW"] = 0
+    df["PREDICTED_CLEAN_NS"] = 0
+    df.loc[df["PREDICTED_SUM_EW"] >= 5, "PREDICTED_CLEAN_EW"] = 1
+    df.loc[df["PREDICTED_SUM_NS"] >= 5, "PREDICTED_CLEAN_NS"] = 1
+    # set manually
+    df.loc[df.loc[:, "TimeIndex"] == 0, "PREDICTED_CLEAN_EW"] = 1
+    df.loc[df.loc[:, "TimeIndex"] == 0, "PREDICTED_CLEAN_NS"] = 1
+    return df
 
 
 def generate_output(pred_ew: Tensor, pred_ns: Tensor, int_to_str_translation: dict) -> pd.DataFrame:
@@ -188,6 +205,9 @@ def generate_output(pred_ew: Tensor, pred_ns: Tensor, int_to_str_translation: di
     SK = ["EK", "HK", "CK"]
     df_ew = pd.DataFrame(pred_ew, columns=["Type", "ObjectID", "TimeIndex"], dtype="int64")
     df_ns = pd.DataFrame(pred_ns, columns=["Type", "ObjectID", "TimeIndex"], dtype="int64")
+    df_ew.sort_values(by=["ObjectID", "TimeIndex"], inplace=True)
+    df_ns.sort_values(by=["ObjectID", "TimeIndex"], inplace=True)
+
     df_ns["Direction"] = "NS"
     df_ew["Direction"] = "EW"
     # map integers back to string
@@ -206,24 +226,21 @@ def generate_output(pred_ew: Tensor, pred_ns: Tensor, int_to_str_translation: di
     # There is nothing I can do. It is what it is.
     prev_type = "NONE"
     for idx, data in df_ew.loc[:, "Type"].items():
-        if data != "NK":
-            prev_type = data
-            continue
-        # we are not station keeping, deduce if Node is ID or AD
-        if prev_type in ["ID", "AD"]:
-            # already not station keeping -> AD
-            df_ew.loc[idx, "Node"] = "AD"
-        else:
-            # we were station keeping, so now we have ID
-            # OR it was first node SS
-            df_ew.loc[idx, "Node"] = "ID"
+        if data == "NK":
+            # we are not station keeping, deduce if Node is ID or AD
+            if prev_type in SK:
+                # we were station keeping, so now we have ID
+                df_ew.loc[idx, "Node"] = "ID"
+            else:
+                # already not station keeping -> AD
+                df_ew.loc[idx, "Node"] = "AD"
 
         prev_type = data
 
     # NS TRANSLATION
     station_keeping_nodes = df_ns.loc[:, "Type"].isin(SK)
     df_ns.loc[station_keeping_nodes, "Node"] = "IK"
-    df_ns.loc[df_ns.loc[:, "Type"] == "NK", "Node"] = "IK"
+    df_ns.loc[df_ns.loc[:, "Type"] == "NK", "Node"] = "ID"
 
     # set beginning node. This (correctly) overwrite some Node labels set above
     df_ns.loc[df_ns.loc[:, "TimeIndex"] == 0, "Node"] = "SS"
@@ -245,33 +262,40 @@ def main():
     # Load models for prediction
     rf_ew = load(TRAINED_MODEL_DIR + "state_classifier_EW.joblib")
     rf_ns = load(TRAINED_MODEL_DIR + "state_classifier_NS.joblib")
+    # models were trained with more than 4 cpus
+    update_rf_params = {"n_jobs": 4}
+    rf_ew = rf_ew.set_params(**update_rf_params)
+    rf_ns = rf_ns.set_params(**update_rf_params)
     classifier_ew: LitClassifier = LitClassifier.load_from_checkpoint(TRAINED_MODEL_DIR + "classification_EW.ckpt")
     classifier_ns: LitClassifier = LitClassifier.load_from_checkpoint(TRAINED_MODEL_DIR + "classification_NS.ckpt")
+    # Load scaler for LitClassifier
+    scaler: StandardScaler = load(TRAINED_MODEL_DIR + "scaler.joblib")
+
     # Read test dataset.
     df, rf_features_ew, rf_features_ns = load_test_data_and_preprocess(Path(TEST_DATA_DIR))
-    print(f"Time: {time.perf_counter() - start_time:4.0f}sec - Dataset loaded")
+    print(f"Time: {time.perf_counter() - start_time:4.0f} sec - Dataset loaded")
     start_time = time.perf_counter()
 
-    scale_features = list(set(CLASSIFIER_FEATURES_EW + CLASSIFIER_FEATURES_NS + rf_features_ns + rf_features_ew))
-    df.loc[:, scale_features] = pd.DataFrame(StandardScaler().fit_transform(df.loc[:, scale_features]),
-                                             index=df.index, columns=scale_features)
     # predict state change
     df["PREDICTED_EW"] = rf_ew.predict(df[rf_features_ew])
     df["PREDICTED_NS"] = rf_ns.predict(df[rf_features_ns])
-    print(f"Time: {time.perf_counter() - start_time:4.0f}sec - States predicted")
+    print(f"Time: {time.perf_counter() - start_time:4.0f} sec - States predicted")
     start_time = time.perf_counter()
 
     # post-processing / pre-processing for classification
     # Manually set the state change at timeindex 0
-    df.loc[df.loc[:, "TimeIndex"] == 0, "PREDICTED_EW"] = 1
-    df.loc[df.loc[:, "TimeIndex"] == 0, "PREDICTED_NS"] = 1
+    df = changepoint_postprocessing(df, 5)
+
     # load datasets for classification
     # get unique vals because in both are base features
+    # currently classification features NS = EW. scaler wants same order as fitted!
+    # transform_features = list(set(CLASSIFIER_FEATURES_EW + CLASSIFIER_FEATURES_NS))
+    df.loc[:, CLASSIFIER_FEATURES_EW] = scaler.transform(df.loc[:, CLASSIFIER_FEATURES_EW])
 
     ds_ew = SubmissionWindowDataset(df, CLASSIFIER_FEATURES_EW, "EW", window_size=11)
     ds_ns = SubmissionWindowDataset(df, CLASSIFIER_FEATURES_NS, "NS", window_size=11)
-    dataloader_ew = DataLoader(ds_ew, batch_size=20, num_workers=2)
-    dataloader_ns = DataLoader(ds_ns, batch_size=10, num_workers=2)
+    dataloader_ew = DataLoader(ds_ew, batch_size=20, num_workers=3)
+    dataloader_ns = DataLoader(ds_ns, batch_size=20, num_workers=3)
     print(f"Time: {time.perf_counter() - start_time:4.0f}sec - Dataloader")
     start_time = time.perf_counter()
 
@@ -299,10 +323,11 @@ def main():
 
 
 if __name__ == "__main__":
-    #cProfile.run('main()')
+    # cProfile.run('main()')
     main()
     if DEBUG:
         from baseline_submissions.evaluation import NodeDetectionEvaluator
+
         ground_truth = pd.read_csv("../../dataset/phase_1_v2/train_labels.csv")
         own = pd.read_csv("../../submission/submission.csv")
         test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)

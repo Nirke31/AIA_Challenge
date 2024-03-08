@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import torch
 from joblib import dump, load
-from lightning.pytorch.callbacks import EarlyStopping
+from lightning.pytorch.callbacks import EarlyStopping, DeviceStatsMonitor
 import lightning as L
 from matplotlib import pyplot as plt
 
@@ -22,51 +22,7 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from own_model.src.dataset_manip import load_data, state_change_eval, MyDataset, ChangePointDataset, split_train_test
 from own_model.src.myModel import LitChangePointClassifier
 
-TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
-TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
 
-BASE_FEATURES_EW = ["Eccentricity",
-                    "Semimajor Axis (m)",
-                    "Inclination (deg)",
-                    "RAAN (deg)",
-                    "Argument of Periapsis (deg)",
-                    "True Anomaly (deg)",
-                    "Latitude (deg)",
-                    "Longitude (deg)",
-                    "Altitude (m)",
-                    ]
-
-BASE_FEATURES_NS = ["Eccentricity",
-                    "Semimajor Axis (m)",
-                    "Inclination (deg)",
-                    "RAAN (deg)",
-                    "Argument of Periapsis (deg)",
-                    "True Anomaly (deg)",
-                    "Latitude (deg)",
-                    "Longitude (deg)",
-                    "Altitude (m)",
-                    "X (m)",
-                    "Y (m)",
-                    "Z (m)",
-                    "Vx (m/s)",
-                    "Vy (m/s)",
-                    "Vz (m/s)"
-                    ]
-
-TRAIN_TEST_RATIO = 0.8
-RANDOM_STATE = 42
-NUM_WORKERS = 4
-EPOCHS = 200
-BATCH_SIZE = 1024
-SHUFFLE_DATA = False
-WINDOW_SIZE = 51
-DIRECTION = "EW"
-NUM_CSV_SETS = -1
-
-L.seed_everything(RANDOM_STATE, workers=True)
-
-
-# https://github.com/geekfeiw/Multi-Scale-1D-ResNet/blob/master/figs/network.png
 # https://github.com/vdumoulin/conv_arithmetic/blob/master/README.md
 
 def main():
@@ -80,11 +36,50 @@ def main():
     features = BASE_FEATURES_EW if DIRECTION == "EW" else BASE_FEATURES_NS
     print("Dataset loaded")
 
+    # feature engineering
+    # features selected based on rf feature importance.
+    features = BASE_FEATURES_EW if DIRECTION == "EW" else BASE_FEATURES_NS
+    engineered_features_ew = {
+        ("std", lambda x: x.rolling(window=window_size).std()):
+            ["Semimajor Axis (m)"],
+        ("kurt", lambda x: x.rolling(window=window_size).kurt()):
+            ["Eccentricity"],
+    }
+    engineered_features_ns = {
+        ("var", lambda x: x.rolling(window=window_size).var()):
+            ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+        ("std", lambda x: x.rolling(window=window_size).std()):
+            ["Semimajor Axis (m)"],  # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
+        ("skew", lambda x: x.rolling(window=window_size).skew()):
+            ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
+        # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
+        #     ["Eccentricity", "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"],
+        ("sem", lambda x: x.rolling(window=window_size).sem()):
+            ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+    }
+
+    # FEATURE ENGINEERING
+    window_size = 6
+    feature_dict = engineered_features_ew if DIRECTION == "EW" else engineered_features_ns
+    for (math_type, lambda_fnc), feature_list in feature_dict.items():
+        for feature in feature_list:
+            new_feature_name = feature + "_" + math_type + "_" + DIRECTION
+            # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
+            # and then added back to the DF
+            df[new_feature_name] = df.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc)
+            features.append(new_feature_name)
+
+    # for feature in FEATURES:
+    #     df[feature + "_var"] = df.groupby(level=0, group_keys=False)[[feature]].apply(
+    #         lambda x: x.rolling(window=window_size).var())
+    #
+    # FEATURES = FEATURES + [x + "_var" for x in FEATURES]
+
+    # fill beginning of rolling window (NaNs). Shouldn't really matter anyways? Maybe else Median
+    df = df.bfill()
+
     # splitting. This splitting has the big problem that I cannot really control how many positive samples are
     # in train and test set. If I am unlucky, all are in one of the two.
-    objectIDs = df.index.get_level_values(0).unique()
-    objID_train, objID_test = train_test_split(objectIDs, train_size=TRAIN_TEST_RATIO)
-
     df_train, df_test = split_train_test(df, TRAIN_TEST_RATIO, random_state=RANDOM_STATE)
 
     scaler = StandardScaler()
@@ -98,12 +93,16 @@ def main():
     ds_train = ChangePointDataset(df_train.loc[:, features], df_train.loc[:, DIRECTION], WINDOW_SIZE)
     ds_test = ChangePointDataset(df_test.loc[:, features], df_test.loc[:, DIRECTION], WINDOW_SIZE)
     print(f"Time: {time.perf_counter() - start_time:4.0f}sec - for dataset to load")
+    ratio_pos_neg_train = sum(ds_train.tgt) / (ds_train.tgt.shape[0] - sum(ds_train.tgt))
+    ratio_pos_neg_test = sum(ds_test.tgt) / (ds_test.tgt.shape[0] - sum(ds_test.tgt))
+    print(f"Ratio pos to neg in train: {ratio_pos_neg_train}")
+    print(f"Ratio pos to neg in test: {ratio_pos_neg_test}")
 
     # Create random sampler to sample more positives than negatives
     num_samples = ds_train.tgt.shape[0]
     num_pos = ds_train.tgt.sum()
     num_neg = num_samples - ds_train.tgt.sum()
-    class_counts = {1: num_pos, 0: num_neg}
+    class_counts = {1: num_pos, 0: num_neg // 4}  # batch has 1/4 pos samples and 3/4 neg.
     # each sample is assigned a weight based on its class
     weights = [1 / class_counts[i] for i in ds_train.tgt]
     sampler = WeightedRandomSampler(weights=weights, num_samples=num_samples)
@@ -119,18 +118,64 @@ def main():
     print("Start fitting...")
 
     # get actual model
-    early_stop_callback = EarlyStopping(monitor="val_BinaryFBetaScore", mode="max", patience=5)
+    early_stop_callback = EarlyStopping(monitor="val_BinaryFBetaScore", mode="max", patience=3)
     trainer = L.Trainer(max_epochs=EPOCHS, enable_progress_bar=True,
-                        callbacks=[early_stop_callback], check_val_every_n_epoch=10, accumulate_grad_batches=5)
-    model = LitChangePointClassifier(WINDOW_SIZE, len(features))
+                        callbacks=[early_stop_callback],
+                        check_val_every_n_epoch=1)  # , accumulate_grad_batches=5
+    model = LitChangePointClassifier(len(features), WINDOW_SIZE)
     trainer.fit(model=model, train_dataloaders=dataloader_train, val_dataloaders=dataloader_val)
     trainer.test(model=model, dataloaders=dataloader_test)
 
     # store model
-    trainer.save_checkpoint("../trained_model/classification.ckpt")
+    trainer.save_checkpoint("../trained_model/changepoint.ckpt")
 
     return
 
 
 if __name__ == "__main__":
+    TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
+    TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
+
+    BASE_FEATURES_EW = [
+        # "Eccentricity",
+        # "Semimajor Axis (m)",
+        "Inclination (deg)",
+        "RAAN (deg)",
+        # "Argument of Periapsis (deg)",
+        # "True Anomaly (deg)",
+        # "Latitude (deg)",
+        # "Longitude (deg)",
+        # "Altitude (m)",
+    ]
+
+    # inclination, raan, std semimajor
+
+    BASE_FEATURES_NS = ["Eccentricity",
+                        "Semimajor Axis (m)",
+                        "Inclination (deg)",
+                        "RAAN (deg)",
+                        "Argument of Periapsis (deg)",
+                        "True Anomaly (deg)",
+                        "Latitude (deg)",
+                        "Longitude (deg)",
+                        "Altitude (m)",
+                        "X (m)",
+                        "Y (m)",
+                        "Z (m)",
+                        "Vx (m/s)",
+                        "Vy (m/s)",
+                        "Vz (m/s)"
+                        ]
+
+    TRAIN_TEST_RATIO = 0.8
+    RANDOM_STATE = 42
+    NUM_WORKERS = 4
+    EPOCHS = 100
+    BATCH_SIZE = 1024
+    SHUFFLE_DATA = False  # no real effect with WeightedRandomSampler
+    WINDOW_SIZE = 51
+    DIRECTION = "EW"
+    NUM_CSV_SETS = -1
+
+    L.seed_everything(RANDOM_STATE, workers=True)
     main()

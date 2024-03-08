@@ -19,20 +19,22 @@ from torch.utils.data import DataLoader
 
 from own_model.src.dataset_manip import load_data, state_change_eval, MyDataset
 from own_model.src.myModel import LitChangePointClassifier
+from baseline_submissions.evaluation import NodeDetectionEvaluator
 
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
 TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
 
-BASE_FEATURES_EW = ["Eccentricity",
-                    "Semimajor Axis (m)",
-                    "Inclination (deg)",
-                    "RAAN (deg)",
-                    "Argument of Periapsis (deg)",
-                    "True Anomaly (deg)",
-                    "Latitude (deg)",
-                    "Longitude (deg)",
-                    "Altitude (m)",
-                    ]
+BASE_FEATURES_EW = [
+    # "Eccentricity",
+    # "Semimajor Axis (m)",
+    "Inclination (deg)",
+    "RAAN (deg)",
+    "Argument of Periapsis (deg)",
+    "True Anomaly (deg)",
+    # "Latitude (deg)",
+    "Longitude (deg)",
+    # "Altitude (m)",  # This is just first div of longitude?
+]
 
 BASE_FEATURES_NS = ["Eccentricity",
                     "Semimajor Axis (m)",
@@ -53,13 +55,8 @@ BASE_FEATURES_NS = ["Eccentricity",
 
 TRAIN_TEST_RATIO = 0.8
 RANDOM_STATE = 42
-EPOCHS = 17
-BATCH_SIZE = 1
-SHUFFLE_DATA = False
-DIRECTION = "EW"
-NUM_CSV_SETS = 50
-
-L.seed_everything(RANDOM_STATE, workers=True)
+DIRECTION = "NS"
+NUM_CSV_SETS = -1
 
 if __name__ == "__main__":
     df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=NUM_CSV_SETS)
@@ -104,33 +101,34 @@ if __name__ == "__main__":
     train_ids, test_ids = train_test_split(object_ids,
                                            test_size=1 - TRAIN_TEST_RATIO,
                                            random_state=RANDOM_STATE)
-    rf = RandomForestClassifier(n_estimators=400, random_state=RANDOM_STATE, n_jobs=5, class_weight="balanced")
+    rf = RandomForestClassifier(n_estimators=400, random_state=RANDOM_STATE, n_jobs=14, class_weight="balanced", )
 
     # features selected based on rf feature importance.
     features = BASE_FEATURES_EW if DIRECTION == "EW" else BASE_FEATURES_NS
     engineered_features_ew = {
-        ("var", lambda x: x.rolling(window=window_size).var()):
-            ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+        # ("var", lambda x: x.rolling(window=window_size).var()):
+        #     ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
         ("std", lambda x: x.rolling(window=window_size).std()):
-            ["Semimajor Axis (m)"],  # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
-        ("skew", lambda x: x.rolling(window=window_size).skew()):
-            ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
-        ("kurt", lambda x: x.rolling(window=window_size).kurt()):
-            ["Eccentricity", "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"],
-        ("sem", lambda x: x.rolling(window=window_size).sem()):
-            ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+            ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],
+        # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
+        # ("skew", lambda x: x.rolling(window=window_size).skew()):
+        #     ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
+        # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
+        #     ["Eccentricity"],  # , "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"
+        # ("sem", lambda x: x.rolling(window=window_size).sem()):
+        #     ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
     }
     engineered_features_ns = {
-        ("var", lambda x: x.rolling(window=window_size).var()):
-            ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+        # ("var", lambda x: x.rolling(window=window_size).var()):
+        #     ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
         ("std", lambda x: x.rolling(window=window_size).std()):
-            ["Semimajor Axis (m)"],  # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
-        ("skew", lambda x: x.rolling(window=window_size).skew()):
-            ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
+            ["Semimajor Axis (m)", "Latitude (deg)", "Vz (m/s)", "Z (m)", "RAAN (deg)", "Inclination (deg)"],  # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
+        # ("skew", lambda x: x.rolling(window=window_size).skew()):
+        #     ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
         # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
         #     ["Eccentricity", "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"],
-        ("sem", lambda x: x.rolling(window=window_size).sem()):
-            ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+        # ("sem", lambda x: x.rolling(window=window_size).sem()):
+        #     ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
     }
 
     # FEATURE ENGINEERING
@@ -144,31 +142,23 @@ if __name__ == "__main__":
             df[new_feature_name] = df.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc)
             features.append(new_feature_name)
 
-    # for feature in FEATURES:
-    #     df[feature + "_var"] = df.groupby(level=0, group_keys=False)[[feature]].apply(
-    #         lambda x: x.rolling(window=window_size).var())
-    #
-    # FEATURES = FEATURES + [x + "_var" for x in FEATURES]
-
     # fill beginning of rolling window (NaNs). Shouldn't really matter anyways? Maybe else Median
     df = df.bfill()
 
-    # # scaling, just to be sure
-    # df.loc[:, features] = pd.DataFrame(StandardScaler().fit_transform(df.loc[:, features]),
-    #                                    index=df.index, columns=features)
-
     test_data = df.loc[test_ids].copy()
     train_data = df.loc[train_ids].copy()
+    # train_data = df.copy()
 
     # f2_scorer = make_scorer(fbeta_score, beta=2)
     # param_grid = {
     #     'ccp_alpha': [0.0, 0.01, 0.02, 0.04, 0.1],
-    #     'min_samples_split': [2, 3, 4]
+    #     'min_samples_split': [2, 3, 4],
+    #     'criterion': ["gini", "entropy"]
     # }
     # cv_rfc = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5, scoring=f2_scorer,
-    #                       n_jobs=5, verbose=4, refit=False)
+    #                       n_jobs=16, verbose=4, refit=False)
     # start_time = timer()
-    # cv_rfc.fit(df[FEATURES], df[DIRECTION])
+    # cv_rfc.fit(df[features], df[DIRECTION])
     # print(f"Took: {timer() - start_time:.3f} seconds")
     # print(cv_rfc.best_params_)
     # print(cv_rfc.best_score_)
@@ -177,7 +167,7 @@ if __name__ == "__main__":
     # RF model
     print("Fitting...")
     start_time = timer()
-    # rf = load("state_classifier_full_job.joblib")
+    # rf = load("../trained_model/state_classifier_EW.joblib")
     rf.fit(train_data[features], train_data[DIRECTION])
     print(f"Took: {timer() - start_time:.3f} seconds")
     # Write classifier to disk
@@ -187,40 +177,72 @@ if __name__ == "__main__":
     train_data["PREDICTED"] = rf.predict(train_data[features])
     test_data["PREDICTED"] = rf.predict(test_data[features])
 
-    print("TRAIN RESULTS:")
-    total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(train_data["PREDICTED"].to_numpy()),
-                                                               torch.tensor(train_data[DIRECTION].to_numpy()))
-    precision = total_tp / (total_tp + total_fp) \
-        if (total_tp + total_fp) != 0 else 0
-    recall = total_tp / (total_tp + total_fn) \
-        if (total_tp + total_fn) != 0 else 0
-    f2 = (5 * total_tp) / (5 * total_tp + 4 * total_fn + total_fp) \
-        if (5 * total_tp + 4 * total_fn + total_fp) != 0 else 0
+    # post processing
+    test_data["PREDICTED_sum"] = test_data["PREDICTED"].rolling(5, center=True).sum()
+    test_data["PREDICTED_CLEAN"] = 0
+    test_data.loc[test_data["PREDICTED_sum"] >= 5, "PREDICTED_CLEAN"] = 1
+    # set manually
+    test_data.loc[test_data["TimeIndex"] == 0, "PREDICTED_CLEAN"] = 1
 
-    print(f"Total TPs: {total_tp}")
-    print(f"Total FPs: {total_fp}")
-    print(f"Total FNs: {total_fn}")
-    print(f"Total TNs: {total_tn}")
+    changepoints = test_data.loc[test_data["PREDICTED_CLEAN"].astype("bool"), ["ObjectID", "TimeIndex"]]
+    changepoints["Direction"] = "EW"
+    changepoints["Node"] = "EGAL"
+    changepoints["Type"] = "EGAL"
+
+    object_ids = changepoints["ObjectID"].unique()
+
+    labels = pd.read_csv(TRAIN_LABEL_PATH)
+    labels = labels.loc[labels["ObjectID"].isin(object_ids), :]
+    lable_ns = labels[labels["Direction"] == "NS"]
+    # Currently not predicting NS therefore just add the correct ones
+    changepoints = pd.concat([changepoints, lable_ns])
+    changepoints = changepoints.reset_index(drop=True)
+    labels = labels.reset_index(drop=True)
+
+    eval = NodeDetectionEvaluator(labels, changepoints, tolerance=6)
+    precision, recall, f2, rmse = eval.score(debug=True)
     print(f'Precision: {precision:.2f}')
     print(f'Recall: {recall:.2f}')
     print(f'F2: {f2:.2f}')
+    print(f'RMSE: {rmse:.2f}')
 
-    print("TEST RESULTS:")
-    total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(test_data["PREDICTED"].to_numpy()),
-                                                               torch.tensor(test_data[DIRECTION].to_numpy()))
-    precision = total_tp / (total_tp + total_fp) \
-        if (total_tp + total_fp) != 0 else 0
-    recall = total_tp / (total_tp + total_fn) \
-        if (total_tp + total_fn) != 0 else 0
-    f2 = (5 * total_tp) / (5 * total_tp + 4 * total_fn + total_fp) \
-        if (5 * total_tp + 4 * total_fn + total_fp) != 0 else 0
-    print(f"Total TPs: {total_tp}")
-    print(f"Total FPs: {total_fp}")
-    print(f"Total FNs: {total_fn}")
-    print(f"Total TNs: {total_tn}")
-    print(f'Precision: {precision:.2f}')
-    print(f'Recall: {recall:.2f}')
-    print(f'F2: {f2:.2f}')
+    eval.plot(object_ids[0])
+
+
+    # print("TRAIN RESULTS:")
+    # total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(train_data["PREDICTED"].to_numpy()),
+    #                                                            torch.tensor(train_data[DIRECTION].to_numpy()))
+    # precision = total_tp / (total_tp + total_fp) \
+    #     if (total_tp + total_fp) != 0 else 0
+    # recall = total_tp / (total_tp + total_fn) \
+    #     if (total_tp + total_fn) != 0 else 0
+    # f2 = (5 * total_tp) / (5 * total_tp + 4 * total_fn + total_fp) \
+    #     if (5 * total_tp + 4 * total_fn + total_fp) != 0 else 0
+    #
+    # print(f"Total TPs: {total_tp}")
+    # print(f"Total FPs: {total_fp}")
+    # print(f"Total FNs: {total_fn}")
+    # print(f"Total TNs: {total_tn}")
+    # print(f'Precision: {precision:.2f}')
+    # print(f'Recall: {recall:.2f}')
+    # print(f'F2: {f2:.2f}')
+    #
+    # print("TEST RESULTS:")
+    # total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(test_data["PREDICTED"].to_numpy()),
+    #                                                            torch.tensor(test_data[DIRECTION].to_numpy()))
+    # precision = total_tp / (total_tp + total_fp) \
+    #     if (total_tp + total_fp) != 0 else 0
+    # recall = total_tp / (total_tp + total_fn) \
+    #     if (total_tp + total_fn) != 0 else 0
+    # f2 = (5 * total_tp) / (5 * total_tp + 4 * total_fn + total_fp) \
+    #     if (5 * total_tp + 4 * total_fn + total_fp) != 0 else 0
+    # print(f"Total TPs: {total_tp}")
+    # print(f"Total FPs: {total_fp}")
+    # print(f"Total FNs: {total_fn}")
+    # print(f"Total TNs: {total_tn}")
+    # print(f'Precision: {precision:.2f}')
+    # print(f'Recall: {recall:.2f}')
+    # print(f'F2: {f2:.2f}')
 
     # feature importance with permutation, more robust or smth like that
     # start_time = timer()
@@ -236,15 +258,3 @@ if __name__ == "__main__":
     # ax.set_ylabel("Mean accuracy decrease")
     # fig.tight_layout()
     # plt.show()
-
-    # plot feature importance
-    # importances = rf.feature_importances_
-    # std = np.std([tree.feature_importances_ for tree in rf.estimators_], axis=0)
-    # forest_importances = pd.Series(importances, index=FEATURES)
-    #
-    # fig, ax = plt.subplots()
-    # forest_importances.plot.bar(yerr=std, ax=ax)
-    # ax.set_title("Feature importances using MDI")
-    # ax.set_ylabel("Mean decrease in impurity")
-    # plt.show()
-    # fig.tight_layout()

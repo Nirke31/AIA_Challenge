@@ -28,7 +28,7 @@ class SubmissionWindowDataset(IterableDataset):
         feature_size = len(self.features)
 
         num_change_points = 0
-        predicted_coloumn = "PREDICTED_" + self.direction
+        predicted_coloumn = "PREDICTED_CLEAN_" + self.direction
 
         num_change_points = (self.data_in.loc[:, predicted_coloumn]).astype(dtype="int64").sum()
 
@@ -115,6 +115,70 @@ class SubmissionWindowDataset(IterableDataset):
                            torch.tensor(self.predicted_tgts.loc[row_idx, "TimeIndex"]))
 
         return yield_time_series()
+
+    def __len__(self):
+        return self.data_in.shape[0]
+
+
+class SubmissionChangePointDataset(Dataset):
+    """
+    Special dataset for submission
+    """
+
+    def __init__(self, data: pd.DataFrame, window_size: int):
+        """
+        Args:
+            data: dataframe with all rows and coloumns.
+            tgts: Series with all rows
+            idx: np array with indices to access the correct rows from data and tgts
+            window_size: size of the window
+        """
+        super().__init__()
+        assert data.empty is False, 'Input is empty brother'
+        if window_size % 2 == 0:
+            raise warnings.warn("I think odd window sizes is needed. Unknown behaviour maybe?")
+        self.window_size = window_size
+        self.feature_size = data.shape[-1]
+        self.offset = (self.window_size - 1) // 2
+        self.data_in = data
+
+        self.idx_to_src = np.arange(self.data_in.shape[0])
+
+        # src created here
+        self._prepare_source(data.sort_index())
+
+    def _prepare_source(self, data):
+        objectIDs = data.index.get_level_values(level=0).unique()
+        num_objs = objectIDs.shape[0]
+
+        # inbetween each object and at beginning and end there is zero padding
+        rows = data.shape[0] + (num_objs + 1) * self.offset
+        cols = self.feature_size
+        self.src = np.zeros((rows, cols), dtype=np.float32)
+
+        curr_offset = self.offset
+        overall_seq_len = 0
+        # start at first timestep and not zero padding
+        self.idx_to_src[:] += self.offset
+        for _, group in data.groupby(level=0, group_keys=False):
+            seq_len = group.shape[0]
+            self.src[curr_offset:curr_offset + seq_len, :] = group.to_numpy()
+
+            # group plus zero padding
+            curr_offset += seq_len + self.offset
+            # update index mapping
+            overall_seq_len += seq_len
+            self.idx_to_src[overall_seq_len:] += self.offset
+        return
+
+    def __getitem__(self, item):
+        mapped_idx = self.idx_to_src[item]
+        start_idx = mapped_idx - self.offset
+        end_idx = mapped_idx + self.offset + 1
+
+        return (torch.from_numpy(self.src[start_idx:end_idx, :]),
+                torch.tensor(self.data_in.loc[item, "ObjectID"]),
+                torch.tensor(self.data_in.loc[item, "TimeIndex"]))
 
     def __len__(self):
         return self.data_in.shape[0]
@@ -220,7 +284,7 @@ class GetWindowDataset(IterableDataset):
 
 class ChangePointDataset(Dataset):
     """
-
+        creates one large array with zero padding between objectsIDs
     """
 
     def __init__(self, data: pd.DataFrame, tgts: pd.Series, window_size: int):
@@ -237,51 +301,53 @@ class ChangePointDataset(Dataset):
             raise warnings.warn("I think odd window sizes is needed. Unknown behaviour maybe?")
         self.window_size = window_size
         self.feature_size = data.shape[-1]
+        self.offset = (self.window_size - 1) // 2
 
-        self.src = data.sort_index()  # sorting makes stuff go faster cuz hashing ?!
         self.tgt = tgts.to_numpy(dtype=np.float32)
-        # holds indices for window and fast access for get_item
-        self.lookup_table = np.empty((self.src.shape[0], 4), dtype=np.int32)
+        self.idx_to_src = np.arange(self.tgt.shape[0])
 
-        self._prepare_source()
+        # src created here
+        self._prepare_source(data.sort_index())
 
-    def _prepare_source(self):
-        self.src["idx"] = range(self.src.shape[0])
-        half_window = (self.window_size - 1) // 2
+    def _prepare_source(self, data):
+        objectIDs = data.index.get_level_values(level=0).unique()
+        num_objs = objectIDs.shape[0]
 
-        def get_indices(row: pd.Series):
-            objectID, timeIndex = row.name
-            item = int(row["idx"])
-            seq_len = self.src.loc[objectID].shape[0]
+        # inbetween each object and at beginning and end there is zero padding
+        rows = data.shape[0] + (num_objs + 1) * self.offset
+        cols = self.feature_size
+        self.src = np.zeros((rows, cols), dtype=np.float32)
 
-            # Calculate start and end indexes of the window
-            start_step = max(0, timeIndex - half_window)
-            end_step = min(seq_len, timeIndex + half_window + 1)
+        curr_offset = self.offset
+        overall_seq_len = 0
+        # start at first timestep and not zero padding
+        self.idx_to_src[:] += self.offset
+        for _, group in data.groupby(level=0, group_keys=False):
+            seq_len = group.shape[0]
+            self.src[curr_offset:curr_offset + seq_len, :] = group.to_numpy()
 
-            win_start_idx = half_window - (timeIndex - start_step)
-            win_end_idx = win_start_idx + (end_step - start_step)
-
-            # translate to idx
-            start_step = item - (timeIndex - start_step)
-            end_step = item + (end_step - timeIndex)
-
-            return [win_start_idx, win_end_idx, start_step, end_step]
-
-        self.lookup_table = np.array(self.src.apply(get_indices, axis=1, result_type='expand'))
-
-        self.src.drop("idx", axis=1, inplace=True)
-        self.src = self.src.to_numpy(dtype=np.float32)
-
+            # group plus zero padding
+            curr_offset += seq_len + self.offset
+            # update index mapping
+            overall_seq_len += seq_len
+            self.idx_to_src[overall_seq_len:] += self.offset
         return
 
     def __getitem__(self, item):
-        # win_start_idx, win_end_idx, start_step, end_step
-        indices = self.lookup_table[item]
-        window = np.zeros((self.window_size, self.feature_size), dtype=np.float32)
-        window[indices[0]:indices[1]] = self.src[indices[2]:indices[3], :]
+        mapped_idx = self.idx_to_src[item]
+        start_idx = mapped_idx - self.offset
+        end_idx = mapped_idx + self.offset + 1
 
-        return (torch.from_numpy(window),
+        return (torch.from_numpy(self.src[start_idx:end_idx, :]),
                 torch.tensor(self.tgt[item]).unsqueeze(0).unsqueeze(0))
+
+    # def __getitems__(self, items):
+    #     mapped_idxs = self.idx_to_src[items]
+    #     start_idx = mapped_idxs - self.offset
+    #     end_idx = mapped_idxs + self.offset + 1
+    #     return [(torch.from_numpy(self.src[s_idx:e_idx, :]),
+    #              torch.tensor(self.tgt[items]).unsqueeze(0).unsqueeze(0))
+    #             for mapped_idx, s_idx, e_idx in zip(mapped_idxs, start_idx, end_idx)]
 
     def __len__(self):
         return self.tgt.shape[0]
@@ -449,10 +515,13 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
                                      on=['TimeIndex', 'ObjectID'],
                                      how='left')
 
+        merged_df["EW_org"] = merged_df["EW"]
+        merged_df["NS_org"] = merged_df["NS"]
+
         indices = merged_df[merged_df['EW'] == 1].index
         seq_len = len(data_df)
         for idx in indices[1:]:
-            puffer = 6
+            puffer = 2
             start = idx - puffer if idx - puffer >= 0 else 0
             end = idx + puffer if idx + puffer <= seq_len else seq_len
             merged_df.loc[start:end, "EW"] = 1
@@ -460,7 +529,7 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         indices = merged_df[merged_df["NS"] == 1].index
         seq_len = len(data_df)
         for idx in indices[1:]:
-            puffer = 6
+            puffer = 2
             start = idx - puffer if idx - puffer >= 0 else 0
             end = idx + puffer if idx + puffer <= seq_len else seq_len
             merged_df.loc[start:end, "NS"] = 1
@@ -662,8 +731,7 @@ def convert_tgts_for_eval(pred: torch.Tensor, tgt: torch.Tensor, objectIDs: torc
     # Apply the function to each group of rows with the same 'ObjectID' and 'Direction'
     groups_pred = pred_df.groupby(['ObjectID', 'Direction'])
     groups_tgt = tgt_df.groupby(['ObjectID', 'Direction'])
-    test = groups_pred[['Node', 'Type']]
-    keep_pred = test.apply(lambda group: group.shift() != group).any(axis=1)
+    keep_pred = groups_pred[['Node', 'Type']].apply(lambda group: group.shift() != group).any(axis=1)
     keep_tgt = groups_tgt[['Node', 'Type']].apply(lambda group: group.shift() != group).any(axis=1)
 
     # Filter the DataFrame to keep only the rows we're interested in

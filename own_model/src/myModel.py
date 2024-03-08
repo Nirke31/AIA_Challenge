@@ -16,6 +16,7 @@ from timeit import default_timer as timer
 import lightning as L
 from torchmetrics.classification import Accuracy, FBetaScore, Recall, Precision, BinaryPrecisionRecallCurve
 from torchmetrics import MetricCollection
+from multiScale1DResNet import MSResNet, SimpleResNet, DumbNet
 
 
 def create_src_mask(src: Tensor, num_heads: int, device: torch.device) -> Tensor:
@@ -316,16 +317,12 @@ class LitClassifier(L.LightningModule):
 
 
 class LitChangePointClassifier(L.LightningModule):
-    def __init__(self, sequence_len: int, feature_size: int):
+    def __init__(self, feature_size: int, seq_len: int):
         super().__init__()
         # needed for loading model
         self.save_hyperparameters()
 
-        self.conv1 = nn.Conv1d(in_channels=feature_size, out_channels=32, kernel_size=3, stride=1, padding=1)
-        self.relu = nn.ReLU()
-        self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
-        self.conv2 = nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
-        self.fc = nn.Linear(64 * (sequence_len // 4), 1)  # Adjust size based on pooling and conv layers
+        self.model = DumbNet(feature_size, seq_len)
 
         # metrics
         metric = MetricCollection([Accuracy(task="binary"),
@@ -349,16 +346,8 @@ class LitChangePointClassifier(L.LightningModule):
     def forward(self, src: Tensor, *args: Any, **kwargs: Any) -> Tensor:
         # Reshape input to (batch_size, feature_size, sequence_len)
         src = src.permute(0, 2, 1)
-        src = self.conv1(src)
-        src = self.relu(src)
-        src = self.pool(src)
-        src = self.conv2(src)
-        src = self.relu(src)
-        src = self.pool(src)
-        # Flatten for the fully connected layer
-        src = torch.flatten(src, 1)
-        src = self.fc(src)
-        return src
+        out = self.model(src)
+        return out
 
     def training_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
         loss, logits, tgt = self.single_step(batch)
@@ -404,10 +393,18 @@ class LitChangePointClassifier(L.LightningModule):
         logits = logits.view(logits.size(0), -1)
         tgt = tgt.squeeze(-1)
 
-        loss_fnc = nn.BCEWithLogitsLoss()  # Look at this again, num_neg/num_pos
+        weight = Tensor([3]).cuda()
+        loss_fnc = nn.BCEWithLogitsLoss(pos_weight=weight)  # Look at this again, num_neg/num_pos
         loss = loss_fnc(logits, tgt)
 
         return loss, logits, tgt
+
+    def predict_step(self, batch, *args: Any, **kwargs: Any) -> Any:
+        src, objectIDs, timeSteps = batch
+        logits = self(src)
+        logits = logits.view(logits.size(0), -1)
+        pred = torch.argmax(logits, dim=1)
+        return pred, objectIDs, timeSteps
 
     def on_train_epoch_start(self) -> None:
         # initialize a new metric for being tracked - for this epoch I think

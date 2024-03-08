@@ -24,4 +24,5 @@ COPY src/ ./src/
  # SPECIFY THE ENTRYPOINT SCRIPT
 CMD python src/submission.py
 
-# docker run --rm --gpus all --name mysubmission -v /home/backwelle/splid-devkit/dataset:/dataset -v/home/backwelle/splid-devkit/submission:/submission test
+# docker build -t miserymodel .
+# docker run --rm --gpus all --name miserymodel -v /home/backwelle/splid-devkit/dataset:/dataset -v/home/backwelle/splid-devkit/submission:/submission miserymodel

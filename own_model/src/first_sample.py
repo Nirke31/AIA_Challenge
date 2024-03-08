@@ -21,12 +21,13 @@ FEATURES = ["Eccentricity",
             "Latitude (deg)",
             "Longitude (deg)",
             "Altitude (m)",
-            "X (m)",
-            "Y (m)",
-            "Z (m)",
-            "Vx (m/s)",
-            "Vy (m/s)",
-            "Vz (m/s)"]
+            # "X (m)",
+            # "Y (m)",
+            # "Z (m)",
+            # "Vx (m/s)",
+            # "Vy (m/s)",
+            # "Vz (m/s)"
+            ]
 
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
 TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
@@ -34,18 +35,16 @@ TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase
 TRAIN_TEST_RATIO = 0.8
 RANDOM_STATE = 42
 
-data_df, labels_df = load_first_sample(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=1000)
+data_df, labels_df = load_first_sample(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=-1)
 print("Dataset loaded")
 indices = range(labels_df.shape[0])
 train_ids, test_ids = train_test_split(indices,
                                        test_size=1 - TRAIN_TEST_RATIO,
                                        random_state=RANDOM_STATE)
-rf = RandomForestClassifier(n_estimators=150, random_state=RANDOM_STATE, n_jobs=5, class_weight="balanced")
+rf = RandomForestClassifier(n_estimators=400, random_state=RANDOM_STATE, n_jobs=12, class_weight="balanced")
 
 train_data = data_df.loc[train_ids, :]
-train_data = StandardScaler().fit_transform(train_data)
 test_data = data_df.loc[test_ids, :]
-test_data = StandardScaler().fit_transform(test_data)
 
 # get labels and transform v
 train_labels = labels_df.loc[train_ids, :]
@@ -84,7 +83,6 @@ print(f'Accuracy: {acc_train:.2f}')
 print(f'Precision: {precision_train:.2f}')
 print(f'Recall: {recall_train:.2f}')
 print(f'F2: {f2_train:.2f}')
-
 
 test_data_pred = torch.tensor(test_data_pred)
 test_labels_EW = torch.tensor(test_labels_EW)
