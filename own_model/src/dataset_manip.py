@@ -15,22 +15,18 @@ class SubmissionWindowDataset(IterableDataset):
     (either 1 for change or 0 for no change). Create windows for all time indices that are 1.
     """
 
-    def __init__(self, data: pd.DataFrame, features: List[str], direction: str, window_size: int):
+    def __init__(self, data: pd.DataFrame, features: List[str], coloum_name: str, window_size: int):
         super().__init__()
         assert data.empty is False, 'Input is empty brother'
         if window_size % 2 == 0:
             raise warnings.warn("I think odd window sizes is needed. Unknown behaviour maybe?")
         self.window_size: int = window_size
         self.features: List[str] = features
-        self.direction: str = direction
 
         self.data_in: pd.DataFrame = data
         feature_size = len(self.features)
 
-        num_change_points = 0
-        predicted_coloumn = "PREDICTED_CLEAN_" + self.direction
-
-        num_change_points = (self.data_in.loc[:, predicted_coloumn]).astype(dtype="int64").sum()
+        num_change_points = (self.data_in.loc[:, coloum_name]).astype(dtype="int64").sum()
 
         # create empty array for storing all window blocks
         # later in __iter__ we only have to iterate over the src and tgt arrays and return them
@@ -38,7 +34,7 @@ class SubmissionWindowDataset(IterableDataset):
         self.src = np.empty((num_change_points, self.window_size, feature_size), dtype=np.float32)
         # storing the pandas dataframe of all the row that will be classified
         self.predicted_tgts = self.data_in.loc[
-            self.data_in.loc[:, predicted_coloumn].astype(dtype="bool"), ["ObjectID", "TimeIndex"]]
+            self.data_in.loc[:, coloum_name].astype(dtype="bool"), ["ObjectID", "TimeIndex"]]
 
         # translation dicts. generated from the dataset itself
         self.tgt_dict_int_to_str = {0: "NK", 1: "CK", 2: "EK", 3: "HK", 4: "FAKE"}
@@ -48,7 +44,7 @@ class SubmissionWindowDataset(IterableDataset):
         self._prepare_source(self.data_in.shape[-1])
 
         # create extra feature, showing which window is starting at index 0
-        zero_timeIndices = self.data_in.loc[self.data_in.loc[:, predicted_coloumn].astype(dtype="bool"), "TimeIndex"]
+        zero_timeIndices = self.data_in.loc[self.data_in.loc[:, coloum_name].astype(dtype="bool"), "TimeIndex"]
         zero_timeIndex_feature = (zero_timeIndices == 0).to_numpy().astype('float32')
 
         # bring into correct shape to add to src
@@ -74,8 +70,9 @@ class SubmissionWindowDataset(IterableDataset):
                 end_iter -= start_iter
                 start_iter = 0
             elif end_iter >= src_seq_len:
-                # window would go beyond sequence. Therefore, move window down
-                start_iter -= (src_seq_len - end_iter)
+                # window would go beyond sequence. Therefore, move window down (-1 because pandas)
+                start_iter -= (end_iter - src_seq_len) + 1
+                end_iter = src_seq_len - 1
 
             # the end_iter is also returned by pandas because it is accessing via index (?!)
             # my end_iter is therefore one smaller than 'normally'
@@ -117,7 +114,7 @@ class SubmissionWindowDataset(IterableDataset):
         return yield_time_series()
 
     def __len__(self):
-        return self.data_in.shape[0]
+        return self.src.shape[0]
 
 
 class SubmissionChangePointDataset(Dataset):
@@ -238,8 +235,9 @@ class GetWindowDataset(IterableDataset):
                 end_iter -= start_iter
                 start_iter = 0
             elif end_iter >= src_seq_len:
-                # window would go beyond sequence. Therefore, move window down
-                start_iter -= (src_seq_len - end_iter)
+                # window would go beyond sequence. Therefore, move window down (-1 because pandas)
+                start_iter -= (end_iter - src_seq_len) + 1
+                end_iter = src_seq_len - 1
 
             # the end_iter is also returned by pandas because it is accessing via index (?!)
             # my end_iter is therefore one smaller than 'normaly'
@@ -448,8 +446,6 @@ def load_data_window_ready(data_location: Path, label_location: Path, amount: in
 
     # drop end of study targets as we do not have to predict those
     labels = labels[labels['Type'] != 'ES']
-    # drop labels at first position. ATM for testing. Later probably use own classifier for predicting them?
-    # labels = labels[labels['TimeIndex'] != 0]
     # if we only load a few csv's, then just load the targets of the loaded objectIDs
     labels = labels[labels['ObjectID'].isin(loaded_objectIDs)]
     labels.reset_index(drop=True, inplace=True)
