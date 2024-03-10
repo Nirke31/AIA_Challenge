@@ -4,9 +4,10 @@ from joblib import dump
 
 import pandas as pd
 import torch
-from lightning.pytorch.callbacks import EarlyStopping
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from lightning.pytorch.tuner import Tuner
 from sklearn.preprocessing import StandardScaler
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 import lightning as L
 
 from own_model.src.dataset_manip import load_data_window_ready, GetWindowDataset
@@ -37,24 +38,27 @@ LOAD_EVAL = False
 RANDOM_STATE = 42
 TRAINED_MODEL_NAME = "model.pkl"
 TRAINED_MODEL_PATH = Path('./trained_model/' + TRAINED_MODEL_NAME)
-TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train")
-TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v2/train_labels.csv")
+TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/train")
+TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/train_labels.csv")
 
 SRC_SIZE = len(FEATURES)
 TGT_SIZE = 5  # based on the dataset dict
 TRAIN_TEST_RATIO = 0.8
 TRAIN_VAL_RATION = 0.8
 BATCH_SIZE = 20
-WINDOW_SIZE = 11
+WINDOW_SIZE = 101
 EPOCHS = 400
-NUM_CSV_SETS = -1
 DIRECTION = "NS"
 NUM_WORKERS = 4
+NUM_CSV_SETS = -1
 
 if __name__ == "__main__":
     # FOR FITTING WINDOW MODEL
     data, labels = load_data_window_ready(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, NUM_CSV_SETS)
+    # Train only first sample or without first sample
+    labels = labels[labels['TimeIndex'] != 0]
     data = data[FEATURES]
+
     scaler = StandardScaler()
     data = pd.DataFrame(scaler.fit_transform(data), columns=data.columns, index=data.index)
     dump(scaler, "../trained_model/scaler.joblib", compress=0)
@@ -73,10 +77,20 @@ if __name__ == "__main__":
     val_labels.reset_index(drop=True, inplace=True)
     # HAVE TO IMPROVE THIS ABOVE OR PUT INTO FUNCTION
 
-    # test_df = train_df.copy()  # FOR DEBUGGING ONLY
     ds_train = GetWindowDataset(data, train_labels, WINDOW_SIZE)
     ds_val = GetWindowDataset(data, val_labels, WINDOW_SIZE)
-    # ds_test = GetWindowDataset(data, test_labels, WINDOW_SIZE)
+    # check train vs val ratio
+    print(f"Train label counts: {ds_train.tgt.loc[:, 'Type'].value_counts()}")
+    print(f"Val label counts {ds_val.tgt.loc[:, 'Type'].value_counts()}")
+
+    # sampler
+    num_samples = ds_train.tgt.shape[0]
+    labels_count: pd.Series = ds_train.tgt.loc[:, 'Type'].value_counts()
+    class_counts = {key: value for key, value in labels_count.items()}
+    # each sample is assigned a weight based on its class
+    weights = [1 / class_counts[i] for i in ds_train.tgt.loc[:, 'Type'].to_list()]
+    sampler = WeightedRandomSampler(weights=weights, num_samples=num_samples)
+
     dataloader_train = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA, num_workers=NUM_WORKERS,
                                   persistent_workers=True, pin_memory=True)
     dataloader_val = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA, num_workers=NUM_WORKERS,
@@ -86,10 +100,29 @@ if __name__ == "__main__":
     print("Start fitting...")
 
     # get actual model
-    model = LitClassifier(WINDOW_SIZE, SRC_SIZE, TGT_SIZE)
-    early_stop_callback = EarlyStopping(monitor="val_f2", mode="max", patience=3)
+    model = LitClassifier(WINDOW_SIZE, SRC_SIZE, 1e-3, TGT_SIZE)
+    early_stop_callback = EarlyStopping(monitor="val_MulticlassFBetaScore", mode="max", patience=3)
+    checkpoint_callback = ModelCheckpoint(monitor="val_MulticlassFBetaScore",
+                                          mode="max",
+                                          dirpath="lightning_logs/best_checkpoints",
+                                          filename='classification_{epoch:02d}_{val_MulticlassFBetaScore:.2f}')
     trainer = L.Trainer(max_epochs=EPOCHS, enable_progress_bar=True,
-                        callbacks=[early_stop_callback], check_val_every_n_epoch=10, accumulate_grad_batches=5)
+                        callbacks=[early_stop_callback, checkpoint_callback],
+                        check_val_every_n_epoch=3, accumulate_grad_batches=3)
+    # LR finder, didnt really help me for first sample
+    # tuner = Tuner(trainer)
+    # # Run learning rate finder
+    # lr_finder = tuner.lr_find(model, train_dataloaders=dataloader_train, val_dataloaders=dataloader_val)
+    # # Results can be found in
+    # print(lr_finder.results)
+    # # Plot with
+    # fig = lr_finder.plot(suggest=True)
+    # fig.show()
+    # # Pick point based on plot, or get suggestion
+    # new_lr = lr_finder.suggestion()
+    # # update hparams of the model
+    # model.hparams.lr = new_lr
+
     trainer.fit(model=model, train_dataloaders=dataloader_train, val_dataloaders=dataloader_val)
     trainer.test(model=model, dataloaders=dataloader_test)
 
