@@ -9,47 +9,38 @@ from torch.utils.data import DataLoader
 from sklearn.preprocessing import StandardScaler
 from joblib import load
 import pandas as pd
+import numpy as np
 
 from myModel import LitClassifier
 from dataset_manip import SubmissionWindowDataset
 
 # INPUT/OUTPUT PATHS WITHIN THE DOCKER CONTAINER
-DEBUG = False
+DEBUG = True
 
 if DEBUG:
     TRAINED_MODEL_DIR = "../trained_model/"
-    TEST_DATA_DIR = "../../dataset/phase_1_v2/train/"
+    TEST_DATA_DIR = "../../dataset/phase_1_v3/train/"
     TEST_PREDS_FP = "../../submission/submission.csv"
 else:
     TRAINED_MODEL_DIR = "/trained_model/"
     TEST_DATA_DIR = "/dataset/test/"
     TEST_PREDS_FP = "/submission/submission.csv"
 
-RF_BASE_FEATURES_EW = ["Inclination (deg)",
-                       "RAAN (deg)",
-                       "Argument of Periapsis (deg)",
-                       "True Anomaly (deg)",
-                       "Longitude (deg)",
+RF_BASE_FEATURES_EW = [
+    "Inclination (deg)",
+    "RAAN (deg)",
+    "True Anomaly (deg)",
+    "Longitude (deg)",
+]
+
+RF_BASE_FEATURES_NS = [
+    "Inclination (deg)",
+    "RAAN (deg)",
+    "True Anomaly (deg)",
+    "Longitude (deg)",
                        ]
 
-RF_BASE_FEATURES_NS = ["Eccentricity",
-                       "Semimajor Axis (m)",
-                       "Inclination (deg)",
-                       "RAAN (deg)",
-                       "Argument of Periapsis (deg)",
-                       "True Anomaly (deg)",
-                       "Latitude (deg)",
-                       "Longitude (deg)",
-                       "Altitude (m)",
-                       "X (m)",
-                       "Y (m)",
-                       "Z (m)",
-                       "Vx (m/s)",
-                       "Vy (m/s)",
-                       "Vz (m/s)"
-                       ]
-
-CLASSIFIER_FEATURES_EW = ["Eccentricity",
+CLASSIFIER_FEATURES = ["Eccentricity",
                           "Semimajor Axis (m)",
                           "Inclination (deg)",
                           "RAAN (deg)",
@@ -66,39 +57,36 @@ CLASSIFIER_FEATURES_EW = ["Eccentricity",
                           # "Vz (m/s)"
                           ]
 
-CLASSIFIER_FEATURES_NS = ["Eccentricity",
-                          "Semimajor Axis (m)",
-                          "Inclination (deg)",
-                          "RAAN (deg)",
-                          "Argument of Periapsis (deg)",
-                          "True Anomaly (deg)",
-                          "Latitude (deg)",
-                          "Longitude (deg)",
-                          "Altitude (m)",
-                          # "X (m)",
-                          # "Y (m)",
-                          # "Z (m)",
-                          # "Vx (m/s)",
-                          # "Vy (m/s)",
-                          # "Vz (m/s)"
-                          ]
+DEG_FEATURES = [
+    "Inclination (deg)",
+    "RAAN (deg)",
+    "Argument of Periapsis (deg)",
+    "True Anomaly (deg)",
+    "Latitude (deg)",
+    "Longitude (deg)"
+]
+
+def add_lag_features(df: pd.DataFrame, feature_cols: List[str], lag_steps: int):
+    new_columns = pd.DataFrame({f"{col}_lag{i}": df.groupby(level=0, group_keys=False)[col].shift(i * 3)
+                                for i in range(1, lag_steps + 1)
+                                for col in feature_cols}, index=df.index)
+    new_columns_neg = pd.DataFrame({f"{col}_lag-{i}": df.groupby(level=0, group_keys=False)[col].shift(i * -3)
+                                    for i in range(1, lag_steps + 1)
+                                    for col in feature_cols}, index=df.index)
+    df_out = pd.concat([df, new_columns, new_columns_neg], axis=1)
+    features_out = feature_cols + new_columns.columns.tolist() + new_columns_neg.columns.to_list()
+    # fill nans
+    df_out = df_out.groupby(level=0, group_keys=False).apply(lambda x: x.bfill())
+    df_out = df_out.groupby(level=0, group_keys=False).apply(lambda x: x.ffill())
+    return df_out, features_out
 
 
 def add_EW_features(data: pd.DataFrame, features_in: List[str], window_size: int) -> Tuple[pd.DataFrame, List[str]]:
     features_ew = features_in.copy()
     # features selected based on rf feature importance
     engineered_features = {
-        # ("var", lambda x: x.rolling(window=window_size).var()):
-        #     ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
         ("std", lambda x: x.rolling(window=window_size).std()):
             ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],
-        # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
-        # ("skew", lambda x: x.rolling(window=window_size).skew()):
-        #     ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
-        # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
-        #     ["Eccentricity"],  # , "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"
-        # ("sem", lambda x: x.rolling(window=window_size).sem()):
-        #     ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
     }
 
     # FEATURE ENGINEERING
@@ -107,8 +95,10 @@ def add_EW_features(data: pd.DataFrame, features_in: List[str], window_size: int
             new_feature_name = feature + "_" + math_type + "_EW"
             # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
             # and then added back to the DF
-            data[new_feature_name] = data.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc)
+            data[new_feature_name] = data.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
             features_ew.append(new_feature_name)
+
+    data, features_ew = add_lag_features(data, features_ew, 4)
     return data, features_ew
 
 
@@ -116,17 +106,8 @@ def add_NS_features(data: pd.DataFrame, features_in: List[str], window_size: int
     features_ns = features_in.copy()
     # features selected based on rf feature importance
     engineered_features = {
-        # ("var", lambda x: x.rolling(window=window_size).var()):
-        #     ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
         ("std", lambda x: x.rolling(window=window_size).std()):
-            ["Semimajor Axis (m)", "Latitude (deg)", "Vz (m/s)", "Z (m)", "RAAN (deg)", "Inclination (deg)"],
-        # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
-        # ("skew", lambda x: x.rolling(window=window_size).skew()):
-        #     ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
-        # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
-        #     ["Eccentricity", "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"],
-        # ("sem", lambda x: x.rolling(window=window_size).sem()):
-        #     ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+            ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],
     }
 
     # FEATURE ENGINEERING
@@ -135,7 +116,7 @@ def add_NS_features(data: pd.DataFrame, features_in: List[str], window_size: int
             new_feature_name = feature + "_" + math_type + "_NS"
             # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
             # and then added back to the DF
-            data[new_feature_name] = data.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc)
+            data[new_feature_name] = data.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
             features_ns.append(new_feature_name)
     return data, features_ns
 
@@ -156,8 +137,12 @@ def load_test_data_and_preprocess(filepath: Path) -> Tuple[pd.DataFrame, List[st
     md_index = pd.MultiIndex.from_frame(merged_data[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
     merged_data.index = md_index
     merged_data.sort_index(inplace=True)
+    # data loaded
 
-    # loaded, now create EW and NS dataframe and features
+    # unwrap
+    merged_data[DEG_FEATURES] = np.unwrap(np.deg2rad(merged_data[DEG_FEATURES]))
+
+    # create EW and NS dataframe and features
     data, rf_features_ew = add_EW_features(merged_data, RF_BASE_FEATURES_EW, 6)
     data, rf_features_ns = add_NS_features(data, RF_BASE_FEATURES_NS, 6)
     data = data.bfill()
@@ -173,9 +158,6 @@ def changepoint_postprocessing(df: pd.DataFrame, window_size: int) -> pd.DataFra
     df["PREDICTED_CLEAN_NS"] = 0
     df.loc[df["PREDICTED_SUM_EW"] >= 5, "PREDICTED_CLEAN_EW"] = 1
     df.loc[df["PREDICTED_SUM_NS"] >= 5, "PREDICTED_CLEAN_NS"] = 1
-    # set manually
-    df.loc[df.loc[:, "TimeIndex"] == 0, "PREDICTED_CLEAN_EW"] = 1
-    df.loc[df.loc[:, "TimeIndex"] == 0, "PREDICTED_CLEAN_NS"] = 1
     return df
 
 
@@ -260,14 +242,20 @@ def generate_output(pred_ew: Tensor, pred_ns: Tensor, int_to_str_translation: di
 def main():
     start_time = time.perf_counter()
     # Load models for prediction
-    rf_ew = load(TRAINED_MODEL_DIR + "state_classifier_EW.joblib")
+    rf_ew = load(TRAINED_MODEL_DIR + "state_classifier_EW_lags_80percent.joblib")
     rf_ns = load(TRAINED_MODEL_DIR + "state_classifier_NS.joblib")
     # models were trained with more than 4 cpus
     update_rf_params = {"n_jobs": 4}
     rf_ew = rf_ew.set_params(**update_rf_params)
     rf_ns = rf_ns.set_params(**update_rf_params)
-    classifier_ew: LitClassifier = LitClassifier.load_from_checkpoint(TRAINED_MODEL_DIR + "classification_EW.ckpt")
-    classifier_ns: LitClassifier = LitClassifier.load_from_checkpoint(TRAINED_MODEL_DIR + "classification_NS.ckpt")
+    classifier_ew: LitClassifier = LitClassifier.load_from_checkpoint(
+        TRAINED_MODEL_DIR + "classification_EW_0.97_101.ckpt")
+    classifier_ns: LitClassifier = LitClassifier.load_from_checkpoint(
+        TRAINED_MODEL_DIR + "classification_NS_0.97_101.ckpt")
+    classifier_first_ew: LitClassifier = LitClassifier.load_from_checkpoint(
+        TRAINED_MODEL_DIR + "classification_EW_0.92_1501_first.ckpt")
+    classifier_first_ns: LitClassifier = LitClassifier.load_from_checkpoint(
+        TRAINED_MODEL_DIR + "classification_NS_0.91_2001_first.ckpt")
     # Load scaler for LitClassifier
     scaler: StandardScaler = load(TRAINED_MODEL_DIR + "scaler.joblib")
 
@@ -275,6 +263,8 @@ def main():
     df, rf_features_ew, rf_features_ns = load_test_data_and_preprocess(Path(TEST_DATA_DIR))
     print(f"Time: {time.perf_counter() - start_time:4.0f} sec - Dataset loaded")
     start_time = time.perf_counter()
+
+    # PREDICT CHANGEPOINTS ---------------------------------------------------------------------------------------------
 
     # predict state change
     df["PREDICTED_EW"] = rf_ew.predict(df[rf_features_ew])
@@ -286,32 +276,58 @@ def main():
     # Manually set the state change at timeindex 0
     df = changepoint_postprocessing(df, 5)
 
-    # load datasets for classification
-    # get unique vals because in both are base features
-    # currently classification features NS = EW. scaler wants same order as fitted!
-    # transform_features = list(set(CLASSIFIER_FEATURES_EW + CLASSIFIER_FEATURES_NS))
-    df.loc[:, CLASSIFIER_FEATURES_EW] = scaler.transform(df.loc[:, CLASSIFIER_FEATURES_EW])
+    # CHANGEPOINTS DONE. NOW CLASSIFICAITON ----------------------------------------------------------------------------
 
-    ds_ew = SubmissionWindowDataset(df, CLASSIFIER_FEATURES_EW, "EW", window_size=11)
-    ds_ns = SubmissionWindowDataset(df, CLASSIFIER_FEATURES_NS, "NS", window_size=11)
-    dataloader_ew = DataLoader(ds_ew, batch_size=20, num_workers=3)
-    dataloader_ns = DataLoader(ds_ns, batch_size=20, num_workers=3)
+    # EW and NS have the same classification features
+    df.loc[:, CLASSIFIER_FEATURES] = scaler.transform(df.loc[:, CLASSIFIER_FEATURES])
+    # set manually
+    df["PREDICTED_FIRST_EW"] = 0
+    df["PREDICTED_FIRST_NS"] = 0
+    df.loc[df.loc[:, "TimeIndex"] == 0, "PREDICTED_FIRST_EW"] = 1
+    df.loc[df.loc[:, "TimeIndex"] == 0, "PREDICTED_FIRST_NS"] = 1
+
+    ds_ew = SubmissionWindowDataset(df, CLASSIFIER_FEATURES, "PREDICTED_CLEAN_EW", window_size=101)
+    ds_ns = SubmissionWindowDataset(df, CLASSIFIER_FEATURES, "PREDICTED_CLEAN_NS", window_size=101)
+    ds_first_ew = SubmissionWindowDataset(df, CLASSIFIER_FEATURES, "PREDICTED_FIRST_EW", window_size=1501)
+    ds_first_ns = SubmissionWindowDataset(df, CLASSIFIER_FEATURES, "PREDICTED_FIRST_NS", window_size=2001)
+    dataloader_ew = DataLoader(ds_ew, batch_size=20, num_workers=1)
+    dataloader_ns = DataLoader(ds_ns, batch_size=20, num_workers=1)
+    dataloader_first_ew = DataLoader(ds_first_ew, batch_size=20, num_workers=1)
+    dataloader_first_ns = DataLoader(ds_first_ns, batch_size=20, num_workers=1)
     print(f"Time: {time.perf_counter() - start_time:4.0f}sec - Dataloader")
     start_time = time.perf_counter()
 
     # classification of type
-    trainer = L.Trainer()
-    prediction_list_ew = trainer.predict(classifier_ew, dataloader_ew, return_predictions=True)
-    prediction_list_ns = trainer.predict(classifier_ns, dataloader_ns, return_predictions=True)
+    trainer_ew = L.Trainer()
+    trainer_ns = L.Trainer()
+    trainer_first_ew = L.Trainer()
+    trainer_first_ns = L.Trainer()
+    prediction_list_ew = trainer_ew.predict(classifier_ew, dataloader_ew, return_predictions=True)
+    prediction_list_ns = trainer_ns.predict(classifier_ns, dataloader_ns, return_predictions=True)
+    prediction_list_first_ew = trainer_first_ew.predict(classifier_first_ew, dataloader_first_ew,
+                                                        return_predictions=True)
+    prediction_list_first_ns = trainer_first_ns.predict(classifier_first_ns, dataloader_first_ns,
+                                                        return_predictions=True)
     print(f"Time: {time.perf_counter() - start_time:4.0f}sec - Type predicted")
     start_time = time.perf_counter()
+
+    # CLASSIFICATION DONE. POSTPROCESSING ------------------------------------------------------------------------------
+
+    # classification "postprocessing"
     # output is a list of tuples. Refactor to tensor
     prediction_list_ew = torch.cat([torch.stack([a, b, c], dim=1) for a, b, c in prediction_list_ew], dim=0)
     prediction_list_ns = torch.cat([torch.stack([a, b, c], dim=1) for a, b, c in prediction_list_ns], dim=0)
+    prediction_list_first_ew = torch.cat([torch.stack([a, b, c], dim=1) for a, b, c in prediction_list_first_ew], dim=0)
+    prediction_list_first_ns = torch.cat([torch.stack([a, b, c], dim=1) for a, b, c in prediction_list_first_ns], dim=0)
+    # adding the first samples
+    prediction_list_ew = torch.concat([prediction_list_ew, prediction_list_first_ew], dim=0)
+    prediction_list_ns = torch.concat([prediction_list_ns, prediction_list_first_ns], dim=0)
 
     # deduce nodes
     test_results = generate_output(prediction_list_ew, prediction_list_ns, ds_ew.tgt_dict_int_to_str)
     print(f"Time: {time.perf_counter() - start_time:4.0f}sec - Output generated")
+
+    # FINISHED. STORE RESULTS ------------------------------------------------------------------------------------------
 
     # Save the test results to a csv file to be submitted to the challenge
     test_results.to_csv(TEST_PREDS_FP, index=False)
@@ -323,12 +339,11 @@ def main():
 
 
 if __name__ == "__main__":
-    # cProfile.run('main()')
     main()
     if DEBUG:
         from baseline_submissions.evaluation import NodeDetectionEvaluator
 
-        ground_truth = pd.read_csv("../../dataset/phase_1_v2/train_labels.csv")
+        ground_truth = pd.read_csv("../../dataset/phase_1_v3/train_labels.csv")
         own = pd.read_csv("../../submission/submission.csv")
         test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
         precision, recall, f2, rmse = test.score(debug=True)
