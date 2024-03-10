@@ -26,3 +26,4 @@ CMD python src/submission.py
 
 # docker build -t miserymodel .
 # docker run --rm --gpus all --name miserymodel -v /home/backwelle/splid-devkit/dataset:/dataset -v/home/backwelle/splid-devkit/submission:/submission miserymodel
+# evalai push miserymodel:latest --phase mit-competition-2164
