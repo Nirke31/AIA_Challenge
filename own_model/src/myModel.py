@@ -227,10 +227,11 @@ class TransformerINATOR(nn.Module):
 
 
 class LitClassifier(L.LightningModule):
-    def __init__(self, sequence_len: int, feature_size: int, num_classes: int):
+    def __init__(self, sequence_len: int, feature_size: int, learning_rate: float, num_classes: int):
         super().__init__()
         # needed for loading model
         self.save_hyperparameters()
+        self.learning_rate = learning_rate
 
         # we add one in _prepare_source
         feature_size += 1
@@ -242,12 +243,28 @@ class LitClassifier(L.LightningModule):
         self.fc = nn.Linear(32 * (sequence_len // 4), num_classes)  # Adjust size based on pooling and conv layers
 
         # maybe use average = 'macro'
-        self.test_accuracy = Accuracy(task="multiclass", num_classes=num_classes)
-        self.test_recall = Recall(task="multiclass", num_classes=num_classes)
-        self.test_precision = Precision(task="multiclass", num_classes=num_classes)
-        self.test_f2score = FBetaScore(task="multiclass", beta=2.0, num_classes=num_classes)
-        self.train_f2score = FBetaScore(task="multiclass", beta=2.0, num_classes=num_classes)
-        self.valid_f2score = FBetaScore(task="multiclass", beta=2.0, num_classes=num_classes)
+        # self.test_accuracy = Accuracy(task="multiclass", num_classes=num_classes)
+        # self.test_recall = Recall(task="multiclass", num_classes=num_classes)
+        # self.test_precision = Precision(task="multiclass", num_classes=num_classes)
+        # self.test_f2score = FBetaScore(task="multiclass", beta=2.0, num_classes=num_classes)
+        # self.train_f2score = FBetaScore(task="multiclass", beta=2.0, num_classes=num_classes)
+        # self.valid_f2score = FBetaScore(task="multiclass", beta=2.0, num_classes=num_classes)
+
+        metric = MetricCollection([Accuracy(task="multiclass", num_classes=num_classes, average="macro"),
+                                   Recall(task="multiclass", num_classes=num_classes, average="macro"),
+                                   Precision(task="multiclass", num_classes=num_classes, average="macro"),
+                                   FBetaScore(task="multiclass", num_classes=num_classes, average="macro", beta=2.0)])
+        self.train_metrics = metric.clone(prefix="train_")
+        self.val_metrics = metric.clone(prefix="val_")
+        self.test_metrics = metric.clone(prefix="test_")
+
+        # Define tracker over the collection to easy keep track of the metrics over multiple epochs
+        self.train_tracker = torchmetrics.wrappers.MetricTracker(self.train_metrics)
+        self.val_tracker = torchmetrics.wrappers.MetricTracker(self.val_metrics)
+
+    def configure_optimizers(self) -> OptimizerLRScheduler:
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        return optimizer
 
     def forward(self, src: Tensor, *args: Any, **kwargs: Any) -> Tensor:
         # Reshape input to (batch_size, feature_size, sequence_len)
@@ -268,7 +285,11 @@ class LitClassifier(L.LightningModule):
 
         # log stuff
         self.log('train_loss', loss)
-        self.log('train_f2', self.train_f2score(logits, tgt), prog_bar=True)
+        metrics = self.train_metrics(logits, tgt)
+        self.log_dict(metrics, prog_bar=True)
+
+        # tracker for plots after training finished
+        self.train_tracker.update(logits, tgt)
 
         return loss
 
@@ -276,19 +297,22 @@ class LitClassifier(L.LightningModule):
         loss, logits, tgt = self.single_step(batch)
 
         # log stuff
-        self.log('val_loss', loss, rank_zero_only=True)
-        self.log('val_f2', self.valid_f2score(logits, tgt), rank_zero_only=True)
+        self.log('val_loss', loss)
+        metrics = self.val_metrics(logits, tgt)
+        self.log_dict(metrics)
+
+        # tracker for plots after training finished
+        self.val_tracker.update(logits, tgt)
+
         return loss
 
     def test_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
         loss, logits, tgt = self.single_step(batch)
 
         # log stuff
-        self.log('test_loss', loss)
-        self.log('test_acc', self.test_accuracy(logits, tgt))
-        self.log('test_recall', self.test_recall(logits, tgt))
-        self.log('test_precision', self.test_precision(logits, tgt))
-        self.log('test_f2', self.test_f2score(logits, tgt))
+        metrics = self.test_metrics(logits, tgt)
+        self.log_dict(metrics, prog_bar=True)
+
         return loss
 
     def single_step(self, batch, *args: Any, **kwargs: Any) -> Tuple[Tensor, Tensor, Tensor]:
@@ -311,9 +335,28 @@ class LitClassifier(L.LightningModule):
         pred = torch.argmax(logits, dim=1)
         return pred, objectIDs, timeSteps
 
-    def configure_optimizers(self) -> OptimizerLRScheduler:
-        optimizer = torch.optim.Adam(self.parameters())
-        return optimizer
+    def on_train_epoch_start(self) -> None:
+        # initialize a new metric for being tracked - for this epoch I think
+        self.train_tracker.increment()
+
+    def on_validation_epoch_start(self) -> None:
+        # initialize a new metric for being tracked - for this epoch I think
+        self.val_tracker.increment()
+
+    def on_validation_epoch_end(self) -> None:
+        output = self.val_metrics.compute()
+        self.log_dict(output)
+        self.val_metrics.reset()
+
+    def on_test_end(self) -> None:
+        # train and val trackers
+        all_train_results = self.train_tracker.compute_all()
+        all_val_results = self.val_tracker.compute_all()
+        self.train_tracker.plot(val=all_train_results)
+        self.val_tracker.plot(val=all_val_results)
+
+        plt.show()
+        self.val_metrics.reset()
 
 
 class LitChangePointClassifier(L.LightningModule):
