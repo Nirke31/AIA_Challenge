@@ -181,7 +181,7 @@ class SubmissionChangePointDataset(Dataset):
         return self.data_in.shape[0]
 
 
-class GetWindowDataset(IterableDataset):
+class GetWindowDataset(Dataset):
     """
     input data must already have Multiindex (ObjectId, TimeIndex)
     """
@@ -247,34 +247,13 @@ class GetWindowDataset(IterableDataset):
             self.src[i, :, :] = self.data_in[(objectID, start_iter): (objectID, end_iter)].to_numpy()
         return
 
-    def __iter__(self):
-        size = self.tgt.shape[0]  # how many ObjectIDs?
-
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is None:  # single-process data loading, return the full iterator
-            iter_start = 0
-            iter_end = size
-        else:  # in a worker process
-            # split workload
-            per_worker = int(math.ceil(float(size) / float(worker_info.num_workers)))
-            worker_id = worker_info.id
-            iter_start = worker_id * per_worker
-            iter_end = min(iter_start + per_worker, size)
-
-        def yield_time_series():
-            for row_idx in range(iter_start, iter_end):
-                # warning: numpy to tensor problem cuz numpy is not writable but tensor does not support that
-                # -> undefined behaviour on write, but we do not write so its fine (I hope)
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    src_array = self.src[row_idx, :, :]
-                    tgt_value_int = self.tgt.loc[row_idx, "Type"]
-                    yield (torch.from_numpy(src_array),
-                           torch.tensor([[tgt_value_int]]),
-                           self.tgt.loc[row_idx, "ObjectID"],
-                           self.tgt.loc[row_idx, "TimeIndex"])
-
-        return yield_time_series()
+    def __getitem__(self, item):
+        src_array = self.src[item, :, :]
+        tgt_value_int = self.tgt.loc[item, "Type"]
+        return (torch.from_numpy(src_array),
+                torch.tensor([[tgt_value_int]]),
+                self.tgt.loc[item, "ObjectID"],
+                self.tgt.loc[item, "TimeIndex"])
 
     def __len__(self):
         return self.tgt.shape[0]
