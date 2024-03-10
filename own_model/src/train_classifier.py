@@ -1,5 +1,7 @@
 import math
 from pathlib import Path
+
+import numpy as np
 from joblib import dump
 
 import pandas as pd
@@ -31,6 +33,15 @@ FEATURES = ["Eccentricity",
             # "Vz (m/s)"
             ]
 
+DEG_FEATURES = [
+    "Inclination (deg)",
+    "RAAN (deg)",
+    "Argument of Periapsis (deg)",
+    "True Anomaly (deg)",
+    "Latitude (deg)",
+    "Longitude (deg)"
+]
+
 # User settings
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 LOAD_MODEL = False
@@ -46,7 +57,7 @@ TGT_SIZE = 5  # based on the dataset dict
 TRAIN_TEST_RATIO = 0.8
 TRAIN_VAL_RATION = 0.8
 BATCH_SIZE = 20
-WINDOW_SIZE = 101
+WINDOW_SIZE = 2001
 EPOCHS = 400
 DIRECTION = "NS"
 NUM_WORKERS = 4
@@ -56,8 +67,11 @@ if __name__ == "__main__":
     # FOR FITTING WINDOW MODEL
     data, labels = load_data_window_ready(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, NUM_CSV_SETS)
     # Train only first sample or without first sample
-    labels = labels[labels['TimeIndex'] != 0]
+    labels = labels[labels['TimeIndex'] == 0]
     data = data[FEATURES]
+
+    # unwrap
+    data[DEG_FEATURES] = np.unwrap(np.deg2rad(data[DEG_FEATURES]))
 
     scaler = StandardScaler()
     data = pd.DataFrame(scaler.fit_transform(data), columns=data.columns, index=data.index)
