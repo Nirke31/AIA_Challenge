@@ -361,215 +361,216 @@ train_label_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/
 # test.plot(subplots=True, title=id)
 # plt.show()
 
-def add_lag_features(df: pd.DataFrame, feature_cols: List[str], lag_steps: int):
-    new_columns = pd.DataFrame({f"{col}_lag{i}": df[col].shift(i * 3)
-                                for i in range(1, lag_steps + 1)
-                                for col in feature_cols}, index=df.index)
-    new_columns_neg = pd.DataFrame({f"{col}_lag-{i}": df[col].shift(i * -3)
-                                    for i in range(1, lag_steps + 1)
-                                    for col in feature_cols}, index=df.index)
-    df_out = pd.concat([df, new_columns, new_columns_neg], axis=1)
-    features_out = feature_cols + new_columns.columns.tolist() + new_columns_neg.columns.to_list()
-    # fill nans
-    df_out = df_out.bfill()
-    df_out = df_out.ffill()
-    return df_out, features_out
+# def add_lag_features(df: pd.DataFrame, feature_cols: List[str], lag_steps: int):
+#     new_columns = pd.DataFrame({f"{col}_lag{i}": df[col].shift(i * 3)
+#                                 for i in range(1, lag_steps + 1)
+#                                 for col in feature_cols}, index=df.index)
+#     new_columns_neg = pd.DataFrame({f"{col}_lag-{i}": df[col].shift(i * -3)
+#                                     for i in range(1, lag_steps + 1)
+#                                     for col in feature_cols}, index=df.index)
+#     df_out = pd.concat([df, new_columns, new_columns_neg], axis=1)
+#     features_out = feature_cols + new_columns.columns.tolist() + new_columns_neg.columns.to_list()
+#     # fill nans
+#     df_out = df_out.bfill()
+#     df_out = df_out.ffill()
+#     return df_out, features_out
+# #
+# # # LOOKING AT BOTH
+# ground_truth = pd.read_csv("../../dataset/phase_1_v3/train_labels.csv")
+# own = pd.read_csv("../../submission/submission_old.csv")
+# nodeEval = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
+# for id in range(270, 2100, 5):
+#     data_df = pd.read_csv(train_data_str + f"/{id}.csv")
+#     labels = pd.read_csv(train_label_str)
+#     data_df.drop(labels='Timestamp', axis=1, inplace=True)
+#     data_df['TimeIndex'] = range(len(data_df))
+#
+#     # Add EW and NS nodes to data. They are extracted from the labels and converted to integers
+#     ground_truth_object = labels[labels['ObjectID'] == id].copy()
+#     ground_truth_object.drop(labels='ObjectID', axis=1, inplace=True)
+#     # Separate the 'EW' and 'NS' types in the ground truth
+#     ground_truth_EW = ground_truth_object[ground_truth_object['Direction'] == 'EW'].copy()
+#     ground_truth_NS = ground_truth_object[ground_truth_object['Direction'] == 'NS'].copy()
+#
+#     # Create 'EW' and 'NS' labels and fill 'unknown' values
+#     ground_truth_EW['EW'] = 1.0
+#     ground_truth_NS['NS'] = 1.0
+#
+#     ground_truth_EW.drop(['Node', 'Type', 'Direction'], axis=1, inplace=True)
+#     ground_truth_NS.drop(['Node', 'Type', 'Direction'], axis=1, inplace=True)
+#
+#     # Merge the input data with the ground truth
+#     merged_df = pd.merge(data_df,
+#                          ground_truth_EW.sort_values('TimeIndex'),
+#                          on=['TimeIndex'],
+#                          how='left')
+#     merged_df = pd.merge_ordered(merged_df,
+#                                  ground_truth_NS.sort_values('TimeIndex'),
+#                                  on=['TimeIndex'],
+#                                  how='left')
+#
+#     merged_df['NS_org'] = merged_df['NS']
+#     merged_df['EW_org'] = merged_df['EW']
+#
+#     indices = merged_df[merged_df['EW'] == 1].index
+#     seq_len = len(data_df)
+#     for idx in indices[1:]:
+#         puffer = 1
+#         start = idx - puffer if idx - puffer >= 0 else 0
+#         end = idx + puffer if idx + puffer <= seq_len else seq_len
+#         merged_df.loc[start:end, "EW"] = 1
+#
+#     indices = merged_df[merged_df["NS"] == 1].index
+#     seq_len = len(data_df)
+#     for idx in indices[1:]:
+#         puffer = 2
+#         start = idx - puffer if idx - puffer >= 0 else 0
+#         end = idx + puffer if idx + puffer <= seq_len else seq_len
+#         merged_df.loc[start:end, "NS"] = 1
+#     # Fill 'unknown' values in 'EW' and 'NS' columns that come before the first valid observation
+#     merged_df['EW'].fillna(0.0, inplace=True)
+#     merged_df['NS'].fillna(0.0, inplace=True)
+#     merged_df['NS_org'].fillna(0.0, inplace=True)
+#     merged_df['EW_org'].fillna(0.0, inplace=True)
+#     merged_df.drop(["TimeIndex"], axis=1,  # , "X (m)", "Y (m)", "Z (m)", "Vx (m/s)", "Vy (m/s)", "Vz (m/s)"
+#                    inplace=True)
+#     features_ns = [
+#         "Eccentricity",
+#         "Semimajor Axis (m)",
+#         "Inclination (deg)",
+#         "RAAN (deg)",
+#         "Argument of Periapsis (deg)",
+#         "True Anomaly (deg)",
+#         "Latitude (deg)",
+#         "Longitude (deg)",
+#         "Altitude (m)",  # This is just first div of longitude?
+#         "X (m)",
+#         "Y (m)",
+#         "Z (m)",
+#         "Vx (m/s)",
+#         "Vy (m/s)",
+#         "Vz (m/s)"
+#     ]
+#     features_ew = [
+#         # "Eccentricity",
+#         # "Semimajor Axis (m)",
+#         "Inclination (deg)",
+#         "RAAN (deg)",
+#         # "Argument of Periapsis (deg)",
+#         "True Anomaly (deg)",
+#         # "Latitude (deg)",
+#         "Longitude (deg)",
+#         # "Altitude (m)",  # This is just first div of longitude?
+#     ]
+#     features_all = [
+#         "Eccentricity",
+#         "Semimajor Axis (m)",
+#         "Inclination (deg)",
+#         "RAAN (deg)",
+#         "Argument of Periapsis (deg)",
+#         "True Anomaly (deg)",
+#         "Latitude (deg)",
+#         "Longitude (deg)",
+#         "Altitude (m)"
+#     ]
+#     DEG_FEATURES = [
+#         "Inclination (deg)",
+#         "RAAN (deg)",
+#         "Argument of Periapsis (deg)",
+#         "True Anomaly (deg)",
+#         "Latitude (deg)",
+#         "Longitude (deg)",
+#     ]
+#
+#     # unwrap
+#     merged_df[DEG_FEATURES] = np.unwrap(np.deg2rad(merged_df[DEG_FEATURES]))
+#
+#     engineered_features_ew = {
+#         # ("var", lambda x: x.rolling(window=window_size).var()):
+#         #     ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+#         ("std", lambda x: x.rolling(window=6).std()):
+#             ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],
+#         # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
+#         # ("skew", lambda x: x.rolling(window=window_size).skew()):
+#         #     ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
+#         # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
+#         #     ["Eccentricity"],  # , "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"
+#         # ("sem", lambda x: x.rolling(window=window_size).sem()):
+#         #     ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+#     }
+#     for (math_type, lambda_fnc), feature_list in engineered_features_ew.items():
+#         for feature in feature_list:
+#             new_feature_name = feature + "_" + math_type + "_EW"
+#
+#             merged_df[new_feature_name] = lambda_fnc(merged_df[feature])
+#             features_all.append(new_feature_name)
+#             features_ew.append(new_feature_name)
+#     # merged_df["RAAN (deg)_std_SUMMED_EW"] = merged_df["RAAN (deg)_std_EW"].rolling(window=6).std()[::-1].expanding().sum(1)[::-1]
+#     # features_ew.append("RAAN (deg)_std_SUMMED_EW")
+#
+#     engineered_features_ns = {
+#         # ("var", lambda x: x.rolling(window=window_size).var()):
+#         #     ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+#         ("std", lambda x: x.rolling(window=6).std()):
+#             ["Semimajor Axis (m)", "Latitude (deg)", "Vz (m/s)", "Z (m)", "RAAN (deg)", "Inclination (deg)"],
+#         # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
+#         # ("skew", lambda x: x.rolling(window=window_size).skew()):
+#         #     ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
+#         # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
+#         #     ["Eccentricity"],  # , "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"
+#         # ("sem", lambda x: x.rolling(window=window_size).sem()):
+#         #     ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+#     }
+#     for (math_type, lambda_fnc), feature_list in engineered_features_ns.items():
+#         for feature in feature_list:
+#             new_feature_name = feature + "_" + math_type + "_NS"
+#
+#             merged_df[new_feature_name] = lambda_fnc(merged_df[feature])
+#             features_all.append(new_feature_name)
+#             features_ns.append(new_feature_name)
+#
+#     merged_df = merged_df.bfill()
+#
+#     # merged_df, features_ew = add_lag_features(merged_df, features_ew, lag_steps=4)
+#
+#     # rf = load("../trained_model/state_classifier_EW_lags.joblib")
+#     # merged_df["PREDICTED_EW"] = rf.predict(merged_df[features_ew])
+#     # merged_df["PREDICTED_SUM_EW"] = merged_df["PREDICTED_EW"].rolling(5, center=True).sum()
+#     # merged_df["PREDICTED_CLEAN_EW"] = 0
+#     # merged_df.loc[merged_df["PREDICTED_SUM_EW"] >= 5, "PREDICTED_CLEAN_EW"] = 1
+#     # rf = load("../trained_model/state_classifier_NS.joblib")
+#     # merged_df["PREDICTED_NS"] = rf.predict(merged_df[features_ns])
+#     # merged_df["PREDICTED_SUM_NS"] = merged_df["PREDICTED_NS"].rolling(5, center=True).sum()
+#     # merged_df["PREDICTED_CLEAN_NS"] = 0
+#     # merged_df.loc[merged_df["PREDICTED_SUM_NS"] >= 5, "PREDICTED_CLEAN_NS"] = 1
+#
+#     merged_df = pd.DataFrame(StandardScaler().fit_transform(merged_df), index=merged_df.index,
+#                              columns=merged_df.columns)
+#     test = merged_df[features_all] #  + ["EW", "PREDICTED_EW", "PREDICTED_SUM_EW", "PREDICTED_CLEAN_EW"] + ["NS", "PREDICTED_NS", "PREDICTED_SUM_NS", "PREDICTED_CLEAN_NS"]
+#     test.plot(subplots=True, title=id)
+#     nodeEval.plot(id)
 
-# LOOKING AT BOTH
-ground_truth = pd.read_csv("../../dataset/phase_1_v3/train_labels.csv")
-own = pd.read_csv("../../submission/submission.csv")
-nodeEval = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
-for id in range(270, 2100, 5):
-    data_df = pd.read_csv(train_data_str + f"/{id}.csv")
-    labels = pd.read_csv(train_label_str)
-    data_df.drop(labels='Timestamp', axis=1, inplace=True)
-    data_df['TimeIndex'] = range(len(data_df))
-
-    # Add EW and NS nodes to data. They are extracted from the labels and converted to integers
-    ground_truth_object = labels[labels['ObjectID'] == id].copy()
-    ground_truth_object.drop(labels='ObjectID', axis=1, inplace=True)
-    # Separate the 'EW' and 'NS' types in the ground truth
-    ground_truth_EW = ground_truth_object[ground_truth_object['Direction'] == 'EW'].copy()
-    ground_truth_NS = ground_truth_object[ground_truth_object['Direction'] == 'NS'].copy()
-
-    # Create 'EW' and 'NS' labels and fill 'unknown' values
-    ground_truth_EW['EW'] = 1.0
-    ground_truth_NS['NS'] = 1.0
-
-    ground_truth_EW.drop(['Node', 'Type', 'Direction'], axis=1, inplace=True)
-    ground_truth_NS.drop(['Node', 'Type', 'Direction'], axis=1, inplace=True)
-
-    # Merge the input data with the ground truth
-    merged_df = pd.merge(data_df,
-                         ground_truth_EW.sort_values('TimeIndex'),
-                         on=['TimeIndex'],
-                         how='left')
-    merged_df = pd.merge_ordered(merged_df,
-                                 ground_truth_NS.sort_values('TimeIndex'),
-                                 on=['TimeIndex'],
-                                 how='left')
-
-    merged_df['NS_org'] = merged_df['NS']
-    merged_df['EW_org'] = merged_df['EW']
-
-    indices = merged_df[merged_df['EW'] == 1].index
-    seq_len = len(data_df)
-    for idx in indices[1:]:
-        puffer = 1
-        start = idx - puffer if idx - puffer >= 0 else 0
-        end = idx + puffer if idx + puffer <= seq_len else seq_len
-        merged_df.loc[start:end, "EW"] = 1
-
-    indices = merged_df[merged_df["NS"] == 1].index
-    seq_len = len(data_df)
-    for idx in indices[1:]:
-        puffer = 2
-        start = idx - puffer if idx - puffer >= 0 else 0
-        end = idx + puffer if idx + puffer <= seq_len else seq_len
-        merged_df.loc[start:end, "NS"] = 1
-    # Fill 'unknown' values in 'EW' and 'NS' columns that come before the first valid observation
-    merged_df['EW'].fillna(0.0, inplace=True)
-    merged_df['NS'].fillna(0.0, inplace=True)
-    merged_df['NS_org'].fillna(0.0, inplace=True)
-    merged_df['EW_org'].fillna(0.0, inplace=True)
-    merged_df.drop(["TimeIndex"], axis=1,  # , "X (m)", "Y (m)", "Z (m)", "Vx (m/s)", "Vy (m/s)", "Vz (m/s)"
-                   inplace=True)
-    features_ns = [
-        "Eccentricity",
-        "Semimajor Axis (m)",
-        "Inclination (deg)",
-        "RAAN (deg)",
-        "Argument of Periapsis (deg)",
-        "True Anomaly (deg)",
-        "Latitude (deg)",
-        "Longitude (deg)",
-        "Altitude (m)",  # This is just first div of longitude?
-        "X (m)",
-        "Y (m)",
-        "Z (m)",
-        "Vx (m/s)",
-        "Vy (m/s)",
-        "Vz (m/s)"
-    ]
-    features_ew = [
-        # "Eccentricity",
-        # "Semimajor Axis (m)",
-        "Inclination (deg)",
-        "RAAN (deg)",
-        "Argument of Periapsis (deg)",
-        "True Anomaly (deg)",
-        # "Latitude (deg)",
-        "Longitude (deg)",
-        # "Altitude (m)",  # This is just first div of longitude?
-    ]
-    features_all = [
-        "Eccentricity",
-        "Semimajor Axis (m)",
-        "Inclination (deg)",
-        "RAAN (deg)",
-        "Argument of Periapsis (deg)",
-        "True Anomaly (deg)",
-        "Latitude (deg)",
-        "Longitude (deg)",
-        "Altitude (m)"
-    ]
-    DEG_FEATURES = [
-        "Inclination (deg)",
-        "RAAN (deg)",
-        "Argument of Periapsis (deg)",
-        "True Anomaly (deg)",
-        "Latitude (deg)",
-        "Longitude (deg)",
-    ]
-
-    # unwrap
-    merged_df[DEG_FEATURES] = np.unwrap(np.deg2rad(merged_df[DEG_FEATURES]))
-
-    engineered_features_ew = {
-        # ("var", lambda x: x.rolling(window=window_size).var()):
-        #     ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
-        ("std", lambda x: x.rolling(window=6).std()):
-            ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity", "RAAN (deg)"],
-        # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
-        # ("skew", lambda x: x.rolling(window=window_size).skew()):
-        #     ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
-        # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
-        #     ["Eccentricity"],  # , "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"
-        # ("sem", lambda x: x.rolling(window=window_size).sem()):
-        #     ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
-    }
-    for (math_type, lambda_fnc), feature_list in engineered_features_ew.items():
-        for feature in feature_list:
-            new_feature_name = feature + "_" + math_type + "_EW"
-
-            merged_df[new_feature_name] = lambda_fnc(merged_df[feature])
-            features_all.append(new_feature_name)
-            features_ew.append(new_feature_name)
-    # merged_df["RAAN (deg)_std_SUMMED_EW"] = merged_df["RAAN (deg)_std_EW"].rolling(window=6).std()[::-1].expanding().sum(1)[::-1]
-    # features_ew.append("RAAN (deg)_std_SUMMED_EW")
-
-    engineered_features_ns = {
-        # ("var", lambda x: x.rolling(window=window_size).var()):
-        #     ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
-        ("std", lambda x: x.rolling(window=6).std()):
-            ["Semimajor Axis (m)", "Latitude (deg)", "Vz (m/s)", "Z (m)", "RAAN (deg)", "Inclination (deg)"],
-        # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
-        # ("skew", lambda x: x.rolling(window=window_size).skew()):
-        #     ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
-        # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
-        #     ["Eccentricity"],  # , "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"
-        # ("sem", lambda x: x.rolling(window=window_size).sem()):
-        #     ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
-    }
-    for (math_type, lambda_fnc), feature_list in engineered_features_ns.items():
-        for feature in feature_list:
-            new_feature_name = feature + "_" + math_type + "_NS"
-
-            merged_df[new_feature_name] = lambda_fnc(merged_df[feature])
-            features_all.append(new_feature_name)
-            features_ns.append(new_feature_name)
-
-    merged_df = merged_df.bfill()
-
-    merged_df, features_ew = add_lag_features(merged_df, features_ew, lag_steps=4)
-
-    rf = load("../trained_model/state_classifier.joblib")
-    merged_df["PREDICTED_EW"] = rf.predict(merged_df[features_ew])
-    merged_df["PREDICTED_SUM_EW"] = merged_df["PREDICTED_EW"].rolling(5, center=True).sum()
-    merged_df["PREDICTED_CLEAN_EW"] = 0
-    merged_df.loc[merged_df["PREDICTED_SUM_EW"] >= 5, "PREDICTED_CLEAN_EW"] = 1
-    # rf = load("../trained_model/state_classifier_NS.joblib")
-    # merged_df["PREDICTED_NS"] = rf.predict(merged_df[features_ns])
-    # merged_df["PREDICTED_SUM_NS"] = merged_df["PREDICTED_NS"].rolling(5, center=True).sum()
-    # merged_df["PREDICTED_CLEAN_NS"] = 0
-    # merged_df.loc[merged_df["PREDICTED_SUM_NS"] >= 5, "PREDICTED_CLEAN_NS"] = 1
-
-    merged_df = pd.DataFrame(StandardScaler().fit_transform(merged_df), index=merged_df.index,
-                             columns=merged_df.columns)
-    test = merged_df[features_all + ["EW", "PREDICTED_EW", "PREDICTED_SUM_EW", "PREDICTED_CLEAN_EW"]] #  + ["NS", "PREDICTED_NS", "PREDICTED_SUM_NS", "PREDICTED_CLEAN_NS"]
-    merged_df.plot(subplots=True, title=id)
-    nodeEval.plot(id)
-
+# hists
 # df = load_data(Path(train_data_str), Path(train_label_str), -1)
 # df = pd.DataFrame(StandardScaler().fit_transform(df), index=df.index, columns=df.columns)
 # df.drop(["EW", "NS", "TimeIndex", "ObjectID"], axis=1, inplace=True)
 # df.hist(bins=15)
 # plt.show()
 
-# ground_truth = pd.read_csv("../../dataset/phase_1_v2/train_labels.csv")
-# own = pd.read_csv("../../submission/submission.csv")
-# test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
-# oids = own["ObjectID"].unique().tolist()
-# wrong_ids = []
-# for id in oids:
-#     tp, fp, fn, gt_object, p_object = test.evaluate(id)
-#     if fp > 0 or fn > 0:
-#         wrong_ids.append(id)
-#
-# print(len(wrong_ids))
-# print(wrong_ids)
-# for id in wrong_ids:
-#     test.plot(id)
+ground_truth = pd.read_csv("../../dataset/phase_1_v3/train_labels.csv")
+own = pd.read_csv("../../submission/submission.csv")
+test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
+oids = own["ObjectID"].unique().tolist()
+wrong_ids = []
+for id in oids:
+    tp, fp, fn, gt_object, p_object = test.evaluate(id)
+    if fp > 0 or fn > 0:
+        wrong_ids.append(id)
+
+print(len(wrong_ids))
+print(wrong_ids)
+for id in wrong_ids:
+    test.plot(id)
 
 # precision, recall, f2, rmse = test.score(debug=True)
 # print(f'Precision: {precision:.2f}')
