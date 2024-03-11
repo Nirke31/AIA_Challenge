@@ -15,7 +15,7 @@ from myModel import LitClassifier
 from dataset_manip import SubmissionWindowDataset
 
 # INPUT/OUTPUT PATHS WITHIN THE DOCKER CONTAINER
-DEBUG = True
+DEBUG = False
 
 if DEBUG:
     TRAINED_MODEL_DIR = "../trained_model/"
@@ -66,6 +66,7 @@ DEG_FEATURES = [
     "Longitude (deg)"
 ]
 
+
 def add_lag_features(df: pd.DataFrame, feature_cols: List[str], lag_steps: int):
     new_columns = pd.DataFrame({f"{col}_lag{i}": df.groupby(level=0, group_keys=False)[col].shift(i * 3)
                                 for i in range(1, lag_steps + 1)
@@ -73,7 +74,10 @@ def add_lag_features(df: pd.DataFrame, feature_cols: List[str], lag_steps: int):
     new_columns_neg = pd.DataFrame({f"{col}_lag-{i}": df.groupby(level=0, group_keys=False)[col].shift(i * -3)
                                     for i in range(1, lag_steps + 1)
                                     for col in feature_cols}, index=df.index)
-    df_out = pd.concat([df, new_columns, new_columns_neg], axis=1)
+    new_df = pd.concat([new_columns, new_columns_neg], axis=1)
+    # basic features were maybe already added, therefore check if these coloumns already exist and don't add them
+    new_df = new_df[new_df.columns.difference(df.columns)]
+    df_out = pd.concat([df, new_df], axis=1)
     features_out = feature_cols + new_columns.columns.tolist() + new_columns_neg.columns.to_list()
     # fill nans
     df_out = df_out.groupby(level=0, group_keys=False).apply(lambda x: x.bfill())
@@ -118,6 +122,8 @@ def add_NS_features(data: pd.DataFrame, features_in: List[str], window_size: int
             # and then added back to the DF
             data[new_feature_name] = data.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
             features_ns.append(new_feature_name)
+
+    data, features_ns = add_lag_features(data, features_ns, 4)
     return data, features_ns
 
 
@@ -242,8 +248,8 @@ def generate_output(pred_ew: Tensor, pred_ns: Tensor, int_to_str_translation: di
 def main():
     start_time = time.perf_counter()
     # Load models for prediction
-    rf_ew = load(TRAINED_MODEL_DIR + "state_classifier_EW_lags_80percent.joblib")
-    rf_ns = load(TRAINED_MODEL_DIR + "state_classifier_NS.joblib")
+    rf_ew = load(TRAINED_MODEL_DIR + "state_classifier_EW_lags.joblib")
+    rf_ns = load(TRAINED_MODEL_DIR + "state_classifier_NS_lags.joblib")
     # models were trained with more than 4 cpus
     update_rf_params = {"n_jobs": 4}
     rf_ew = rf_ew.set_params(**update_rf_params)
