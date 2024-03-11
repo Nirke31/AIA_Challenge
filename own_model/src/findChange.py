@@ -45,10 +45,10 @@ TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase
 BASE_FEATURES_EW = [
     # "Eccentricity",
     # "Semimajor Axis (m)",
-    "Inclination (deg)",
-    "RAAN (deg)",
+    # "Inclination (deg)",
+    # "RAAN (deg)",
     # '"Argument of Periapsis (deg)",
-    "True Anomaly (deg)",
+    # "True Anomaly (deg)",
     # "Latitude (deg)",
     "Longitude (deg)",
     # "Altitude (m)",  # This is just first div of longitude?
@@ -60,7 +60,7 @@ BASE_FEATURES_NS = [
     "Inclination (deg)",
     "RAAN (deg)",
     # "Argument of Periapsis (deg)",
-    "True Anomaly (deg)",
+    # "True Anomaly (deg)",
     # "Latitude (deg)",
     "Longitude (deg)",
     # "Altitude (m)",
@@ -72,6 +72,16 @@ BASE_FEATURES_NS = [
     # "Vz (m/s)"
 ]
 
+ENGINEERED_FEATURES_EW = {
+    ("std", lambda x: x.rolling(window=WINDOW_SIZE).std()):
+        ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],  # , "RAAN (deg)"
+}
+ENGINEERED_FEATURES_NS = {
+    ("std", lambda x: x.rolling(window=WINDOW_SIZE).std()):
+        ["Semimajor Axis (m)", "Altitude (m)"],
+    # "Semimajor Axis (m)", "Latitude (deg)", "RAAN (deg)", "Inclination (deg)"
+}
+
 DEG_FEATURES = [
     "Inclination (deg)",
     "RAAN (deg)",
@@ -81,10 +91,25 @@ DEG_FEATURES = [
     "Longitude (deg)"
 ]
 
+WINDOW_SIZE = 6
 TRAIN_TEST_RATIO = 0.8
 RANDOM_STATE = 42
-DIRECTION = "NS"
+DIRECTION = "EW"
 NUM_CSV_SETS = -1
+
+
+def print_params():
+    print("PARAMS:")
+    print(f"NUM CSVs: {NUM_CSV_SETS}")
+    print(f"DIRECTION: {DIRECTION}")
+    if DIRECTION == "EW":
+        print(f"BASE_FEATURES: {BASE_FEATURES_EW}")
+        print(f"ENGINEERED FEATURES: {ENGINEERED_FEATURES_EW}")
+    else:
+        print(f"BASE_FEATURES: {BASE_FEATURES_NS}")
+        print(f"ENGINEERED FEATURES: {ENGINEERED_FEATURES_NS}")
+    print(f"FEATURES: {features}")
+
 
 if __name__ == "__main__":
     df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=NUM_CSV_SETS)
@@ -102,22 +127,11 @@ if __name__ == "__main__":
 
     # features selected based on rf feature importance.
     features = BASE_FEATURES_EW if DIRECTION == "EW" else BASE_FEATURES_NS
-    engineered_features_ew = {
-        ("std", lambda x: x.rolling(window=window_size).std()):
-            ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],  # , "RAAN (deg)"
-    }
-    engineered_features_ns = {
-        ("std", lambda x: x.rolling(window=window_size).std()):
-            ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],
-        # "Semimajor Axis (m)", "Latitude (deg)", "RAAN (deg)", "Inclination (deg)"
-    }
-
     # unwrap
     df[DEG_FEATURES] = np.unwrap(np.deg2rad(df[DEG_FEATURES]))
 
     # FEATURE ENGINEERING
-    window_size = 6
-    feature_dict = engineered_features_ew if DIRECTION == "EW" else engineered_features_ns
+    feature_dict = ENGINEERED_FEATURES_EW if DIRECTION == "EW" else ENGINEERED_FEATURES_NS
     for (math_type, lambda_fnc), feature_list in feature_dict.items():
         for feature in feature_list:
             new_feature_name = feature + "_" + math_type + "_" + DIRECTION
@@ -127,8 +141,7 @@ if __name__ == "__main__":
             features.append(new_feature_name)
 
     # add lags
-    if DIRECTION == "EW":  #  or DIRECTION == "NS"
-        df, features = add_lag_features(df, features, 4)
+    df, features = add_lag_features(df, features, 9)
 
     # MANIPULATION DONE. TIME FOR TRAINING
     test_data = df.loc[test_ids].copy()
@@ -151,6 +164,7 @@ if __name__ == "__main__":
     # print(cv_rfc.cv_results_)
 
     # RF model
+    print_params()
     print("Fitting...")
     start_time = timer()
     # rf = load("../trained_model/state_classifier.joblib")
@@ -234,7 +248,7 @@ if __name__ == "__main__":
     # feature importance with permutation, more robust or smth like that
     start_time = timer()
     f2_scorer = make_scorer(fbeta_score, beta=2)
-    result = permutation_importance(rf, test_data[features], test_data[DIRECTION].to_numpy(), n_repeats=10,
+    result = permutation_importance(rf, test_data[features], test_data[DIRECTION].to_numpy(), n_repeats=5,
                                     random_state=RANDOM_STATE, n_jobs=2, scoring=f2_scorer)
     elapsed_time = timer() - start_time
     print(f"Elapsed time to compute the importances: {elapsed_time:.3f} seconds")
