@@ -54,22 +54,23 @@ BASE_FEATURES_EW = [
     # "Altitude (m)",  # This is just first div of longitude?
 ]
 
-BASE_FEATURES_NS = ["Eccentricity",
-                    # "Semimajor Axis (m)",
-                    # "Inclination (deg)",
-                    # "RAAN (deg)",
-                    "Argument of Periapsis (deg)",
-                    "True Anomaly (deg)",
-                    # "Latitude (deg)",
-                    "Longitude (deg)",
-                    "Altitude (m)",
-                    # "X (m)",
-                    # "Y (m)",
-                    # "Z (m)",
-                    # "Vx (m/s)",
-                    # "Vy (m/s)",
-                    # "Vz (m/s)"
-                    ]
+BASE_FEATURES_NS = [
+    # "Eccentricity",
+    # "Semimajor Axis (m)",
+    "Inclination (deg)",
+    "RAAN (deg)",
+    # "Argument of Periapsis (deg)",
+    "True Anomaly (deg)",
+    # "Latitude (deg)",
+    "Longitude (deg)",
+    # "Altitude (m)",
+    # "X (m)",
+    # "Y (m)",
+    # "Z (m)",
+    # "Vx (m/s)",
+    # "Vy (m/s)",
+    # "Vz (m/s)"
+]
 
 DEG_FEATURES = [
     "Inclination (deg)",
@@ -77,12 +78,12 @@ DEG_FEATURES = [
     "Argument of Periapsis (deg)",
     "True Anomaly (deg)",
     "Latitude (deg)",
-    "Longitude (deg)",
+    "Longitude (deg)"
 ]
 
 TRAIN_TEST_RATIO = 0.8
 RANDOM_STATE = 42
-DIRECTION = "EW"
+DIRECTION = "NS"
 NUM_CSV_SETS = -1
 
 if __name__ == "__main__":
@@ -106,17 +107,9 @@ if __name__ == "__main__":
             ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],  # , "RAAN (deg)"
     }
     engineered_features_ns = {
-        # ("var", lambda x: x.rolling(window=window_size).var()):
-        #     ["Semimajor Axis (m)"],  # , "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
         ("std", lambda x: x.rolling(window=window_size).std()):
-            ["Semimajor Axis (m)", "Latitude (deg)", "Vz (m/s)", "Z (m)", "RAAN (deg)", "Inclination (deg)"],
-        # "Eccentricity", "Semimajor Axis (m)", "Longitude (deg)", "Altitude (m)"
-        # ("skew", lambda x: x.rolling(window=window_size).skew()):
-        #     ["Eccentricity"],  # , "Semimajor Axis (m)", "Argument of Periapsis (deg)", "Altitude (m)"
-        # ("kurt", lambda x: x.rolling(window=window_size).kurt()):
-        #     ["Eccentricity", "Argument of Periapsis (deg)", "Semimajor Axis (m)", "Longitude (deg)"],
-        # ("sem", lambda x: x.rolling(window=window_size).sem()):
-        #     ["Longitude (deg)"],  # "Eccentricity", "Argument of Periapsis (deg)", "Longitude (deg)", "Altitude (m)"
+            ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],
+        # "Semimajor Axis (m)", "Latitude (deg)", "RAAN (deg)", "Inclination (deg)"
     }
 
     # unwrap
@@ -134,7 +127,8 @@ if __name__ == "__main__":
             features.append(new_feature_name)
 
     # add lags
-    df, features = add_lag_features(df, features, 4)
+    if DIRECTION == "EW":  #  or DIRECTION == "NS"
+        df, features = add_lag_features(df, features, 4)
 
     # MANIPULATION DONE. TIME FOR TRAINING
     test_data = df.loc[test_ids].copy()
@@ -163,7 +157,7 @@ if __name__ == "__main__":
     rf.fit(train_data[features], train_data[DIRECTION])
     print(f"Took: {timer() - start_time:.3f} seconds")
     # Write classifier to disk
-    dump(rf, "../trained_model/state_classifier.joblib", compress=0)
+    dump(rf, "../trained_model/state_classifier.joblib", compress=3)
 
     print("Predicting...")
     train_data["PREDICTED"] = rf.predict(train_data[features])
@@ -179,7 +173,7 @@ if __name__ == "__main__":
     test_data.loc[test_data["TimeIndex"] == 0, "PREDICTED_CLEAN"] = 1
 
     changepoints = test_data.loc[test_data["PREDICTED_CLEAN"].astype("bool"), ["ObjectID", "TimeIndex"]]
-    changepoints["Direction"] = "EW"
+    changepoints["Direction"] = DIRECTION
     changepoints["Node"] = "EGAL"
     changepoints["Type"] = "EGAL"
 
@@ -187,9 +181,9 @@ if __name__ == "__main__":
     object_ids = changepoints["ObjectID"].unique()
     labels = pd.read_csv(TRAIN_LABEL_PATH)
     labels = labels.loc[labels["ObjectID"].isin(object_ids), :]
-    lable_ns = labels[labels["Direction"] == "NS"]
+    lable_other_dir = labels[labels["Direction"] != DIRECTION]
     # Currently not predicting NS therefore just add the correct ones
-    changepoints = pd.concat([changepoints, lable_ns])
+    changepoints = pd.concat([changepoints, lable_other_dir])
     changepoints = changepoints.reset_index(drop=True)
     labels = labels.reset_index(drop=True)
 
@@ -241,7 +235,7 @@ if __name__ == "__main__":
     start_time = timer()
     f2_scorer = make_scorer(fbeta_score, beta=2)
     result = permutation_importance(rf, test_data[features], test_data[DIRECTION].to_numpy(), n_repeats=10,
-                                    random_state=RANDOM_STATE, n_jobs=1, scoring=f2_scorer)
+                                    random_state=RANDOM_STATE, n_jobs=2, scoring=f2_scorer)
     elapsed_time = timer() - start_time
     print(f"Elapsed time to compute the importances: {elapsed_time:.3f} seconds")
     forest_importances = pd.Series(result.importances_mean, index=features)
@@ -252,5 +246,5 @@ if __name__ == "__main__":
     fig.tight_layout()
     plt.show()
 
-    PrecisionRecallDisplay.from_estimator(rf, test_data[features], test_data["EW"], name="RF", plot_chance_level=True)
+    PrecisionRecallDisplay.from_estimator(rf, test_data[features], test_data[DIRECTION], name="RF", plot_chance_level=True)
     plt.show()
