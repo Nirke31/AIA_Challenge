@@ -16,22 +16,44 @@ from own_model.src.dataset_manip import load_data_window_ready, GetWindowDataset
 from own_model.src.myModel import LitClassifier
 
 SHUFFLE_DATA = False
-FEATURES = ["Eccentricity",
-            "Semimajor Axis (m)",
-            "Inclination (deg)",
-            "RAAN (deg)",
-            "Argument of Periapsis (deg)",
-            "True Anomaly (deg)",
-            "Latitude (deg)",
-            "Longitude (deg)",
-            "Altitude (m)",
-            # "X (m)",
-            # "Y (m)",
-            # "Z (m)",
-            # "Vx (m/s)",
-            # "Vy (m/s)",
-            # "Vz (m/s)"
-            ]
+FEATURES_NS = [
+    # "Eccentricity",
+    # "Semimajor Axis (m)",
+    "Inclination (deg)",
+    "RAAN (deg)",
+    # "Argument of Periapsis (deg)",
+    # "True Anomaly (deg)",
+    # "Latitude (deg)",
+    "Longitude (deg)",
+    # "Altitude (m)",
+    # "X (m)",
+    # "Y (m)",
+    # "Z (m)",
+    # "Vx (m/s)",
+    # "Vy (m/s)",
+    # "Vz (m/s)"
+]
+FEATURES_EW = [
+    "Eccentricity",
+    "Semimajor Axis (m)",
+    "Inclination (deg)",
+    "RAAN (deg)",
+    "Argument of Periapsis (deg)",
+    "True Anomaly (deg)",
+    "Latitude (deg)",
+    "Longitude (deg)",
+    "Altitude (m)",  # This is just first div of longitude?
+]
+
+ENGINEERED_FEATURES_EW = {
+    ("std", lambda x: x.rolling(window=6).std()):
+        ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],  # , "RAAN (deg)"
+}
+ENGINEERED_FEATURES_NS = {
+    ("std", lambda x: x.rolling(window=6).std()):
+        ["Semimajor Axis (m)", "Altitude (m)"],
+    # "Semimajor Axis (m)", "Latitude (deg)", "RAAN (deg)", "Inclination (deg)"
+}
 
 DEG_FEATURES = [
     "Inclination (deg)",
@@ -52,26 +74,38 @@ TRAINED_MODEL_PATH = Path('./trained_model/' + TRAINED_MODEL_NAME)
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/train")
 TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/train_labels.csv")
 
-SRC_SIZE = len(FEATURES)
 TGT_SIZE = 5  # based on the dataset dict
 TRAIN_TEST_RATIO = 0.8
 TRAIN_VAL_RATION = 0.8
 BATCH_SIZE = 20
-WINDOW_SIZE = 2001
+WINDOW_SIZE = 101
 EPOCHS = 400
-DIRECTION = "NS"
+DIRECTION = "EW"
 NUM_WORKERS = 4
 NUM_CSV_SETS = -1
+FEATURES = FEATURES_EW if DIRECTION == "EW" else FEATURES_NS
+SRC_SIZE = len(FEATURES)
 
 if __name__ == "__main__":
     # FOR FITTING WINDOW MODEL
     data, labels = load_data_window_ready(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, NUM_CSV_SETS)
     # Train only first sample or without first sample
     labels = labels[labels['TimeIndex'] == 0]
-    data = data[FEATURES]
 
     # unwrap
     data[DEG_FEATURES] = np.unwrap(np.deg2rad(data[DEG_FEATURES]))
+
+    # # FEATURE ENGINEERING
+    # feature_dict = ENGINEERED_FEATURES_EW if DIRECTION == "EW" else ENGINEERED_FEATURES_NS
+    # for (math_type, lambda_fnc), feature_list in feature_dict.items():
+    #     for feature in feature_list:
+    #         new_feature_name = feature + "_" + math_type + "_" + DIRECTION
+    #         # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
+    #         # and then added back to the DF, backfill to fill NANs resulting from window
+    #         data[new_feature_name] = data.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
+    #         FEATURES.append(new_feature_name)
+
+    data = data[FEATURES]
 
     scaler = StandardScaler()
     data = pd.DataFrame(scaler.fit_transform(data), columns=data.columns, index=data.index)
@@ -114,6 +148,8 @@ if __name__ == "__main__":
     print("Start fitting...")
 
     # get actual model
+    # have to (re)set size because features were added
+    SRC_SIZE = len(FEATURES)
     model = LitClassifier(WINDOW_SIZE, SRC_SIZE, 1e-3, TGT_SIZE)
     early_stop_callback = EarlyStopping(monitor="val_MulticlassFBetaScore", mode="max", patience=3)
     checkpoint_callback = ModelCheckpoint(monitor="val_MulticlassFBetaScore",
