@@ -178,6 +178,13 @@ def changepoint_postprocessing(df: pd.DataFrame, window_size: int) -> pd.DataFra
     df["PREDICTED_CLEAN_NS"] = 0
     df.loc[df["PREDICTED_SUM_EW"] >= 5, "PREDICTED_CLEAN_EW"] = 1
     df.loc[df["PREDICTED_SUM_NS"] >= 5, "PREDICTED_CLEAN_NS"] = 1
+
+    # removing two changepoints that are directly next to each other.
+    diff = df["PREDICTED_CLEAN_EW"].shift(1, fill_value=0) & df["PREDICTED_CLEAN_EW"]
+    df["PREDICTED_CLEAN_EW"] -= diff
+    diff = df["PREDICTED_CLEAN_NS"].shift(1, fill_value=0) & df["PREDICTED_CLEAN_NS"]
+    df["PREDICTED_CLEAN_NS"] -= diff
+
     return df
 
 
@@ -293,14 +300,13 @@ def main():
     start_time = time.perf_counter()
 
     # post-processing / pre-processing for classification
-    # Manually set the state change at timeindex 0
     df = changepoint_postprocessing(df, 5)
 
     # CHANGEPOINTS DONE. NOW CLASSIFICAITON ----------------------------------------------------------------------------
 
     # EW and NS have the same classification features
     df.loc[:, CLASSIFIER_FEATURES] = scaler.transform(df.loc[:, CLASSIFIER_FEATURES])
-    # set manually
+    # Manually set the state change at timeindex 0
     df["PREDICTED_FIRST_EW"] = 0
     df["PREDICTED_FIRST_NS"] = 0
     df.loc[df.loc[:, "TimeIndex"] == 0, "PREDICTED_FIRST_EW"] = 1
