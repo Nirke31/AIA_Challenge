@@ -179,7 +179,7 @@ class SimpleResNet(nn.Module):
 
 
 class DumbNet(nn.Module):
-    def __init__(self, input_channels: int, seq_len: int):
+    def __init__(self, input_channels: int, seq_len: int, num_classes: int):
         super(DumbNet, self).__init__()
 
         self.flatten = nn.Flatten(1)
@@ -189,7 +189,7 @@ class DumbNet(nn.Module):
         self.hidden1 = nn.Linear(128, 64)
         self.hidden2 = nn.Linear(64, 32)
 
-        self.out = nn.Linear(32, 1)
+        self.out = nn.Linear(32, num_classes)
 
         self.relu = nn.ReLU()
 
