@@ -233,14 +233,16 @@ class LitClassifier(L.LightningModule):
         self.save_hyperparameters()
         self.learning_rate = learning_rate
 
-        # we add one in _prepare_source
-        feature_size += 1
+        # # we add one in _prepare_source
+        # feature_size += 1
 
-        self.conv1 = nn.Conv1d(in_channels=feature_size, out_channels=16, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv1d(in_channels=feature_size, out_channels=16, kernel_size=13, stride=1, padding=6)
+        self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=7, stride=1, padding=3)
+        self.conv3 = nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
         self.relu = nn.ReLU()
         self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
-        self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1)
-        self.fc = nn.Linear(32 * (sequence_len // 4), num_classes)  # Adjust size based on pooling and conv layers
+        self.fc = nn.Linear(64 * (sequence_len // 8), 256)  # Adjust size based on pooling and conv layers
+        self.fc1 = nn.Linear(256, num_classes)  # Adjust size based on pooling and conv layers
 
         # maybe use average = 'macro'
         # self.test_accuracy = Accuracy(task="multiclass", num_classes=num_classes)
@@ -269,15 +271,23 @@ class LitClassifier(L.LightningModule):
     def forward(self, src: Tensor, *args: Any, **kwargs: Any) -> Tensor:
         # Reshape input to (batch_size, feature_size, sequence_len)
         src = src.permute(0, 2, 1)
+
         src = self.conv1(src)
         src = self.relu(src)
         src = self.pool(src)
+
         src = self.conv2(src)
+        src = self.relu(src)
+        src = self.pool(src)
+
+        src = self.conv3(src)
         src = self.relu(src)
         src = self.pool(src)
         # Flatten for the fully connected layer
         src = torch.flatten(src, 1)
         src = self.fc(src)
+        src = self.relu(src)
+        src = self.fc1(src)
         return src
 
     def training_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
@@ -474,3 +484,67 @@ class LitChangePointClassifier(L.LightningModule):
 
         plt.show()
         self.val_metrics.reset()
+
+
+class Autoencoder(L.LightningModule):
+    def __init__(self, num_input: int, num_hid: int, num_bottleneck: int, act_fn: Callable = nn.GELU):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(num_input, num_hid),
+            act_fn(),  # inplace=True, do I need this?
+            nn.Linear(num_hid, num_bottleneck)
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(num_bottleneck, num_hid),
+            act_fn(),
+            nn.Linear(num_hid, num_input),
+            nn.Tanh()
+        )
+        # its just ez this way
+        self.loss_epoch = []
+        self.loss = []
+
+    def configure_optimizers(self) -> OptimizerLRScheduler:
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        return optimizer
+
+    def _get_reconstruction_loss(self, x: Tensor, x_hat: Tensor) -> Tensor:
+        loss = F.mse_loss(x, x_hat, reduction="none")
+        loss = loss.sum(dim=[1]).mean(dim=[0])
+        return loss
+
+    def forward(self, x):
+        z = self.encoder(x)
+        x_hat = self.decoder(z)
+        return x_hat
+
+    def _single_step(self, batch) -> Tuple[Tensor, Tensor, Tensor]:
+        # the TensorDataset returns a list with my batch for some fkin reason
+        x = batch[0]
+        x_hat = self.forward(x)
+        loss = self._get_reconstruction_loss(x, x_hat)
+        return x, x_hat, loss
+
+    def training_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
+        x, x_hat, loss = self._single_step(batch)
+        self.log("training_loss", loss, prog_bar=True)
+        self.loss_epoch.append(loss.detach().cpu())
+        return loss
+
+    def validation_step(self, batch, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
+        x, x_hat, loss = self._single_step(batch)
+        self.log("val_loss", loss)
+        return
+
+    def predict_step(self, batch, *args: Any, **kwargs: Any) -> Any:
+        # not really a predict step but an encode step
+        x = self.encoder(batch)
+        return x
+
+    def on_train_epoch_end(self) -> None:
+        self.loss.append(np.mean(self.loss_epoch))
+        self.loss_epoch = []
+    def on_train_end(self) -> None:
+        plt.plot(np.arange(len(self.loss)),  self.loss)
+        plt.show()
+

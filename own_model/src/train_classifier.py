@@ -34,20 +34,26 @@ FEATURES_NS = [
     # "Vz (m/s)"
 ]
 FEATURES_EW = [
-    "Eccentricity",
-    "Semimajor Axis (m)",
+    # "Eccentricity",
+    # "Semimajor Axis (m)",
     "Inclination (deg)",
     "RAAN (deg)",
-    "Argument of Periapsis (deg)",
-    "True Anomaly (deg)",
-    "Latitude (deg)",
+    # "Argument of Periapsis (deg)",
+    # "True Anomaly (deg)",
+    # "Latitude (deg)",
     "Longitude (deg)",
-    "Altitude (m)",  # This is just first div of longitude?
+    # "Altitude (m)",
+    # "X (m)",
+    # "Y (m)",
+    # "Z (m)",
+    # "Vx (m/s)",
+    # "Vy (m/s)",
+    # "Vz (m/s)"
 ]
 
 ENGINEERED_FEATURES_EW = {
     ("std", lambda x: x.rolling(window=6).std()):
-        ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],  # , "RAAN (deg)"
+        ["Semimajor Axis (m)", "Altitude (m)"],  # , "RAAN (deg)",, "Eccentricity"
 }
 ENGINEERED_FEATURES_NS = {
     ("std", lambda x: x.rolling(window=6).std()):
@@ -80,30 +86,35 @@ TRAIN_VAL_RATION = 0.8
 BATCH_SIZE = 20
 WINDOW_SIZE = 101
 EPOCHS = 400
-DIRECTION = "EW"
+DIRECTION = "NS"
 NUM_WORKERS = 4
 NUM_CSV_SETS = -1
 FEATURES = FEATURES_EW if DIRECTION == "EW" else FEATURES_NS
 SRC_SIZE = len(FEATURES)
 
 if __name__ == "__main__":
+    L.seed_everything(RANDOM_STATE, workers=True)
     # FOR FITTING WINDOW MODEL
-    data, labels = load_data_window_ready(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, NUM_CSV_SETS)
+    # data, labels = load_data_window_ready(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, NUM_CSV_SETS)
+    # data.to_pickle("../../dataset/data.pkl")
+    # labels.to_pickle("../../dataset/labels.pkl")
+    data: pd.DataFrame = pd.read_pickle("../../dataset/data.pkl")
+    labels: pd.DataFrame = pd.read_pickle("../../dataset/labels.pkl")
     # Train only first sample or without first sample
     labels = labels[labels['TimeIndex'] == 0]
 
     # unwrap
     data[DEG_FEATURES] = np.unwrap(np.deg2rad(data[DEG_FEATURES]))
 
-    # # FEATURE ENGINEERING
-    # feature_dict = ENGINEERED_FEATURES_EW if DIRECTION == "EW" else ENGINEERED_FEATURES_NS
-    # for (math_type, lambda_fnc), feature_list in feature_dict.items():
-    #     for feature in feature_list:
-    #         new_feature_name = feature + "_" + math_type + "_" + DIRECTION
-    #         # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
-    #         # and then added back to the DF, backfill to fill NANs resulting from window
-    #         data[new_feature_name] = data.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
-    #         FEATURES.append(new_feature_name)
+    # FEATURE ENGINEERING
+    feature_dict = ENGINEERED_FEATURES_EW if DIRECTION == "EW" else ENGINEERED_FEATURES_NS
+    for (math_type, lambda_fnc), feature_list in feature_dict.items():
+        for feature in feature_list:
+            new_feature_name = feature + "_" + math_type + "_" + DIRECTION
+            # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
+            # and then added back to the DF, backfill to fill NANs resulting from window
+            data[new_feature_name] = data.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
+            FEATURES.append(new_feature_name)
 
     data = data[FEATURES]
 
@@ -140,7 +151,7 @@ if __name__ == "__main__":
     sampler = WeightedRandomSampler(weights=weights, num_samples=num_samples)
 
     dataloader_train = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA, num_workers=NUM_WORKERS,
-                                  persistent_workers=True, pin_memory=True)
+                                  persistent_workers=True, pin_memory=True, sampler=sampler)
     dataloader_val = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA, num_workers=NUM_WORKERS,
                                 persistent_workers=True, pin_memory=True)
     dataloader_test = DataLoader(ds_val, batch_size=BATCH_SIZE, shuffle=SHUFFLE_DATA, num_workers=NUM_WORKERS)
@@ -151,7 +162,7 @@ if __name__ == "__main__":
     # have to (re)set size because features were added
     SRC_SIZE = len(FEATURES)
     model = LitClassifier(WINDOW_SIZE, SRC_SIZE, 1e-3, TGT_SIZE)
-    early_stop_callback = EarlyStopping(monitor="val_MulticlassFBetaScore", mode="max", patience=3)
+    early_stop_callback = EarlyStopping(monitor="val_MulticlassFBetaScore", mode="max", patience=4)
     checkpoint_callback = ModelCheckpoint(monitor="val_MulticlassFBetaScore",
                                           mode="max",
                                           dirpath="lightning_logs/best_checkpoints",
