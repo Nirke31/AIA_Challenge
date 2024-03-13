@@ -213,11 +213,11 @@ class GetWindowDataset(Dataset):
         # create all window sequences
         self._prepare_source(self.data_in.shape[-1])
 
-        # create extra feature, showing which window is starting at index 0
-        zero_timeIndex_feature = (self.tgt.loc[:, "TimeIndex"] == 0).to_numpy().astype('float32')
-        test = np.expand_dims(zero_timeIndex_feature, axis=(1, 2))
-        test = np.repeat(test, window_size, axis=1)
-        self.src = np.append(self.src, test, axis=-1)
+        # # create extra feature, showing which window is starting at index 0
+        # zero_timeIndex_feature = (self.tgt.loc[:, "TimeIndex"] == 0).to_numpy().astype('float32')
+        # test = np.expand_dims(zero_timeIndex_feature, axis=(1, 2))
+        # test = np.repeat(test, window_size, axis=1)
+        # self.src = np.append(self.src, test, axis=-1)
 
     def _prepare_source(self, feature_size) -> None:
         for i, (row_idx, row) in enumerate(self.tgt.iterrows()):
@@ -498,7 +498,9 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         for idx in indices[1:]:
             puffer = 2
             start = idx - puffer if idx - puffer >= 0 else 0
-            end = idx + puffer if idx + puffer <= seq_len else seq_len
+            end = idx + puffer if idx + puffer < seq_len else seq_len
+            # debug assert to see if window is smaller
+            assert end - start == 4  # 4 not 5 because pandas indexing
             merged_df.loc[start:end, "EW"] = 1
 
         indices = merged_df[merged_df["NS"] == 1].index
@@ -506,7 +508,9 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         for idx in indices[1:]:
             puffer = 2
             start = idx - puffer if idx - puffer >= 0 else 0
-            end = idx + puffer if idx + puffer <= seq_len else seq_len
+            end = idx + puffer if idx + puffer < seq_len else seq_len
+            # debug assert to see if window is smaller
+            assert end - start == 4  # 4 not 5 because pandas indexing
             merged_df.loc[start:end, "NS"] = 1
 
         # Fill 'unknown' values in 'EW' and 'NS' columns that come before the first valid observation
