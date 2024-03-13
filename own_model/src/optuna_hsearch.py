@@ -1,7 +1,10 @@
+from typing import List
+
 import optuna
+from numpy.lib.stride_tricks import sliding_window_view
 from optuna import create_study
 
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, KFold
 from pathlib import Path
 from timeit import default_timer as timer
 
@@ -13,7 +16,7 @@ from lightning.pytorch.callbacks import EarlyStopping
 import lightning as L
 from matplotlib import pyplot as plt
 
-from sklearn.ensemble import RandomForestClassifier, IsolationForest
+from sklearn.ensemble import RandomForestClassifier, IsolationForest, HistGradientBoostingClassifier
 from sklearn.metrics import fbeta_score, make_scorer
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.inspection import permutation_importance
@@ -21,6 +24,35 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
 
 from own_model.src.dataset_manip import load_data, state_change_eval, MyDataset
+
+
+def custom_loss_func(ground_truth: np.array, predictions: np.array, **kwargs):
+    predicted_sum = np.convolve(predictions, np.ones(5), mode="same")
+    predicted = np.zeros(predicted_sum.shape[0])
+    predicted[predicted_sum >= 5] = 1
+
+    ground_truth_sum = np.convolve(ground_truth, np.ones(5), mode="same")
+    truth = np.zeros(ground_truth_sum.shape[0])
+    truth[ground_truth_sum >= 5] = 1
+
+    # f2 score
+    f2_score = fbeta_score(truth, predicted, beta=2, zero_division=0.0)
+    return f2_score
+
+
+def add_lag_features(df: pd.DataFrame, feature_cols: List[str], lag_steps: int):
+    new_columns = pd.DataFrame({f"{col}_lag{i}": df.groupby(level=0, group_keys=False)[col].shift(i * 3)
+                                for i in range(1, lag_steps + 1)
+                                for col in feature_cols}, index=df.index)
+    new_columns_neg = pd.DataFrame({f"{col}_lag-{i}": df.groupby(level=0, group_keys=False)[col].shift(i * -3)
+                                    for i in range(1, lag_steps + 1)
+                                    for col in feature_cols}, index=df.index)
+    df_out = pd.concat([df, new_columns, new_columns_neg], axis=1)
+    features_out = feature_cols + new_columns.columns.tolist() + new_columns_neg.columns.to_list()
+    # fill nans
+    df_out = df_out.groupby(level=0, group_keys=False).apply(lambda x: x.bfill())
+    df_out = df_out.groupby(level=0, group_keys=False).apply(lambda x: x.ffill())
+    return df_out, features_out
 
 
 def load_stuff():
@@ -32,21 +64,13 @@ def load_stuff():
     # RF approach
     # features selected based on rf feature importance.
     features = BASE_FEATURES_EW.copy() if DIRECTION == "EW" else BASE_FEATURES_NS.copy()
-    engineered_features_ew = {
-        ("std", lambda x: x.rolling(window=window_size).std()):
-            ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],
-    }
-    engineered_features_ns = {
-        ("std", lambda x: x.rolling(window=window_size).std()):
-            ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],
-    }
 
     # unwrap
     df[features] = np.unwrap(np.deg2rad(df[features]))
 
     # FEATURE ENGINEERING
     window_size = 6
-    feature_dict = engineered_features_ew if DIRECTION == "EW" else engineered_features_ns
+    feature_dict = ENGINEERED_FEATURES_EW if DIRECTION == "EW" else ENGINEERED_FEATURES_NS
     for (math_type, lambda_fnc), feature_list in feature_dict.items():
         for feature in feature_list:
             new_feature_name = feature + "_" + math_type + "_" + DIRECTION
@@ -55,25 +79,26 @@ def load_stuff():
             df[new_feature_name] = df.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
             features.append(new_feature_name)
 
+    add_lag_features(df, features, lag_steps=8)
+
     return df, features
 
 
 def objective(trial):
-    n_estimators = trial.suggest_categorical('n_estimators', [50, 100, 200, 400, 800, 1000])
-    min_samples_split = trial.suggest_categorical('min_samples_split', [2, 3, 4, 6, 8])
-    ccp_alpha = trial.suggest_categorical('ccp_alpha', [0.0, 0.01, 0.04, 0.08, 0.1, 0.3, 0.6, 1.0])
+    learning_rate = trial.suggest_categorical("learning_rate", [0.01, 0.05, 0.1, 0.2, 0.5])
+    max_iter = trial.suggest_categorical("max_iter", [50, 100, 200, 300, 400])
+    max_leaf_nodes = trial.suggest_categorical("max_leaf_nodes", [None, 21, 31, 41])
+    min_samples_leaf = trial.suggest_categorical("min_samples_leaf", [20, 25, 30])
+    l2_regularization = trial.suggest_categorical("l2_regularization", [0, 0.0001, 0.001, 0.1])
 
-    rf = RandomForestClassifier(n_estimators=n_estimators, random_state=RANDOM_STATE, n_jobs=14,
-                                class_weight="balanced", min_samples_split=min_samples_split,
-                                ccp_alpha=ccp_alpha)
+    rf = HistGradientBoostingClassifier(random_state=RANDOM_STATE, class_weight="balanced", learning_rate=learning_rate,
+                                        max_iter=max_iter, early_stopping=False, max_leaf_nodes=max_leaf_nodes,
+                                        min_samples_leaf=min_samples_leaf, l2_regularization=l2_regularization)
+
     f2_scorer = make_scorer(fbeta_score, beta=2)
-
-    rf.fit(train_data[features], train_data[DIRECTION])
-    predicted = rf.predict(test_data[features])
-    f2_score = fbeta_score(test_data[DIRECTION], predicted, beta=2.0)
-
-    # score = cross_val_score(rf, df[features], df["NS"], n_jobs=1, cv=3, scoring=f2_scorer)
-    # f2_score = score.mean()
+    kf = KFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
+    score = cross_val_score(rf, df[features], df[DIRECTION], n_jobs=5, scoring=f2_scorer, cv=kf)
+    f2_score = score.mean()
     return f2_score
 
 
@@ -84,22 +109,21 @@ if __name__ == "__main__":
     BASE_FEATURES_EW = [
         # "Eccentricity",
         # "Semimajor Axis (m)",
-        "Inclination (deg)",
-        "RAAN (deg)",
-        "Argument of Periapsis (deg)",
-        "True Anomaly (deg)",
+        # "Inclination (deg)",
+        # "RAAN (deg)",
+        # '"Argument of Periapsis (deg)",
+        # "True Anomaly (deg)",
         # "Latitude (deg)",
         "Longitude (deg)",
         # "Altitude (m)",  # This is just first div of longitude?
     ]
-
     BASE_FEATURES_NS = [
         # "Eccentricity",
         # "Semimajor Axis (m)",
         "Inclination (deg)",
         "RAAN (deg)",
         # "Argument of Periapsis (deg)",
-        "True Anomaly (deg)",
+        # "True Anomaly (deg)",
         # "Latitude (deg)",
         "Longitude (deg)",
         # "Altitude (m)",
@@ -111,23 +135,39 @@ if __name__ == "__main__":
         # "Vz (m/s)"
     ]
 
+    ENGINEERED_FEATURES_EW = {
+        ("std", lambda x: x.rolling(window=6).std()):
+            ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],  # , "RAAN (deg)"
+    }
+    ENGINEERED_FEATURES_NS = {
+        ("std", lambda x: x.rolling(window=6).std()):
+            ["Semimajor Axis (m)", "Altitude (m)"],
+        # "Semimajor Axis (m)", "Latitude (deg)", "RAAN (deg)", "Inclination (deg)"
+    }
+
+    DEG_FEATURES = [
+        "Inclination (deg)",
+        "RAAN (deg)",
+        "Argument of Periapsis (deg)",
+        "True Anomaly (deg)",
+        "Latitude (deg)",
+        "Longitude (deg)"
+    ]
+
     RANDOM_STATE = 42
     DIRECTION = "NS"
     NUM_CSV_SETS = -1
 
     # Beginning
     df, features = load_stuff()
-    object_ids = df['ObjectID'].unique()
-    train_ids, test_ids = train_test_split(object_ids, test_size=0.2, random_state=RANDOM_STATE)
-    test_data = df.loc[test_ids].copy()
-    train_data = df.loc[train_ids].copy()
 
-    study_name = "hSearch"
+    study_name = "hSearch_HistGrad_NS"
     db_file_path = "C:/Users/nikla/Desktop/test_db/mystorage.db"
     # storage = optuna.storages.RDBStorage(url=db_file_path, engine_kwargs={"connect_args": {"timeout": 100}})
+    sampler = optuna.samplers.CmaEsSampler()
     study = create_study(load_if_exists=True, study_name=study_name, direction="maximize",
                          storage=f'sqlite:///{db_file_path}')
-    study.optimize(objective, n_trials=100)
+    study.optimize(objective, n_trials=200)
     # dump(study, "study.pkl")
     # Print the optimal hyperparameters
     print('Number of finished trials:', len(study.trials))
