@@ -22,6 +22,7 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.inspection import permutation_importance
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
+from xgboost import XGBClassifier
 
 from own_model.src.dataset_manip import load_data, state_change_eval, MyDataset
 
@@ -85,15 +86,18 @@ def load_stuff():
 
 
 def objective(trial):
-    learning_rate = trial.suggest_categorical("learning_rate", [0.01, 0.05, 0.1, 0.2, 0.5])
-    max_iter = trial.suggest_categorical("max_iter", [50, 100, 200, 300, 400])
-    max_leaf_nodes = trial.suggest_categorical("max_leaf_nodes", [None, 21, 31, 41])
-    min_samples_leaf = trial.suggest_categorical("min_samples_leaf", [20, 25, 30])
-    l2_regularization = trial.suggest_categorical("l2_regularization", [0, 0.0001, 0.001, 0.1])
+    learning_rate = trial.suggest_categorical("learning_rate", [0.1, 0.3, 0.5, 0.7, 0.9])
+    n_estimators = trial.suggest_categorical("max_iter", [50, 100, 150, 200, 300, 400])
+    reg_lambda = trial.suggest_categorical("reg_lambda", [0.01, 0.1, 0.5, 1.0, 1.5, 2.0])
+    max_depth = trial.suggest_categorical("max_depth", [2, 4, 6, 8, 10, 12])
 
-    rf = HistGradientBoostingClassifier(random_state=RANDOM_STATE, class_weight="balanced", learning_rate=learning_rate,
-                                        max_iter=max_iter, early_stopping=False, max_leaf_nodes=max_leaf_nodes,
-                                        min_samples_leaf=min_samples_leaf, l2_regularization=l2_regularization)
+    # rf = HistGradientBoostingClassifier(random_state=RANDOM_STATE, class_weight="balanced", learning_rate=learning_rate,
+    #                                     max_iter=max_iter, early_stopping=False, max_leaf_nodes=None,
+    #                                     min_samples_leaf=25, l2_regularization=0.1)
+
+    rf = XGBClassifier(random_state=RANDOM_STATE, n_estimators=n_estimators, max_leaves=0, learning_rate=learning_rate,
+                       verbosity=2, tree_method="hist", scale_pos_weight=scale_pos, reg_lambda=reg_lambda,
+                       max_depth=max_depth, n_jobs=3)
 
     f2_scorer = make_scorer(fbeta_score, beta=2)
     kf = KFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
@@ -161,13 +165,18 @@ if __name__ == "__main__":
     # Beginning
     df, features = load_stuff()
 
+    num_pos = df[DIRECTION].sum()
+    all_samples = df[DIRECTION].shape[0]
+    num_neg = all_samples - num_pos
+    scale_pos = num_neg / num_pos
+
     study_name = "hSearch_HistGrad_NS"
-    db_file_path = "C:/Users/nikla/Desktop/test_db/mystorage.db"
+    db_file_path = "C:/Users/nikla/Desktop/test_db/mystorage_GDB.db"
     # storage = optuna.storages.RDBStorage(url=db_file_path, engine_kwargs={"connect_args": {"timeout": 100}})
     sampler = optuna.samplers.CmaEsSampler()
     study = create_study(load_if_exists=True, study_name=study_name, direction="maximize",
                          storage=f'sqlite:///{db_file_path}')
-    study.optimize(objective, n_trials=200)
+    study.optimize(objective, n_trials=100)
     # dump(study, "study.pkl")
     # Print the optimal hyperparameters
     print('Number of finished trials:', len(study.trials))
