@@ -26,36 +26,43 @@ else:
     TEST_DATA_DIR = "/dataset/test/"
     TEST_PREDS_FP = "/submission/submission.csv"
 
+WINDOW_SIZE = 6
+
 RF_BASE_FEATURES_EW = [
-    "Inclination (deg)",
-    "RAAN (deg)",
-    "True Anomaly (deg)",
     "Longitude (deg)",
 ]
-
 RF_BASE_FEATURES_NS = [
     "Inclination (deg)",
     "RAAN (deg)",
-    "True Anomaly (deg)",
     "Longitude (deg)",
-                       ]
+]
+
+ENGINEERED_FEATURES_EW = {
+    ("std", lambda x: x.rolling(window=WINDOW_SIZE).std()):
+        ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"]
+
+}
+ENGINEERED_FEATURES_NS = {
+    ("std", lambda x: x.rolling(window=WINDOW_SIZE).std()):
+        ["Semimajor Axis (m)", "Altitude (m)"]
+}
 
 CLASSIFIER_FEATURES = ["Eccentricity",
-                          "Semimajor Axis (m)",
-                          "Inclination (deg)",
-                          "RAAN (deg)",
-                          "Argument of Periapsis (deg)",
-                          "True Anomaly (deg)",
-                          "Latitude (deg)",
-                          "Longitude (deg)",
-                          "Altitude (m)",
-                          # "X (m)",
-                          # "Y (m)",
-                          # "Z (m)",
-                          # "Vx (m/s)",
-                          # "Vy (m/s)",
-                          # "Vz (m/s)"
-                          ]
+                       "Semimajor Axis (m)",
+                       "Inclination (deg)",
+                       "RAAN (deg)",
+                       "Argument of Periapsis (deg)",
+                       "True Anomaly (deg)",
+                       "Latitude (deg)",
+                       "Longitude (deg)",
+                       "Altitude (m)",
+                       # "X (m)",
+                       # "Y (m)",
+                       # "Z (m)",
+                       # "Vx (m/s)",
+                       # "Vy (m/s)",
+                       # "Vz (m/s)"
+                       ]
 
 DEG_FEATURES = [
     "Inclination (deg)",
@@ -87,14 +94,9 @@ def add_lag_features(df: pd.DataFrame, feature_cols: List[str], lag_steps: int):
 
 def add_EW_features(data: pd.DataFrame, features_in: List[str], window_size: int) -> Tuple[pd.DataFrame, List[str]]:
     features_ew = features_in.copy()
-    # features selected based on rf feature importance
-    engineered_features = {
-        ("std", lambda x: x.rolling(window=window_size).std()):
-            ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],
-    }
 
     # FEATURE ENGINEERING
-    for (math_type, lambda_fnc), feature_list in engineered_features.items():
+    for (math_type, lambda_fnc), feature_list in ENGINEERED_FEATURES_EW.items():
         for feature in feature_list:
             new_feature_name = feature + "_" + math_type + "_EW"
             # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
@@ -102,20 +104,15 @@ def add_EW_features(data: pd.DataFrame, features_in: List[str], window_size: int
             data[new_feature_name] = data.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
             features_ew.append(new_feature_name)
 
-    data, features_ew = add_lag_features(data, features_ew, 4)
+    data, features_ew = add_lag_features(data, features_ew, 8)
     return data, features_ew
 
 
 def add_NS_features(data: pd.DataFrame, features_in: List[str], window_size: int) -> Tuple[pd.DataFrame, List[str]]:
     features_ns = features_in.copy()
-    # features selected based on rf feature importance
-    engineered_features = {
-        ("std", lambda x: x.rolling(window=window_size).std()):
-            ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],
-    }
 
     # FEATURE ENGINEERING
-    for (math_type, lambda_fnc), feature_list in engineered_features.items():
+    for (math_type, lambda_fnc), feature_list in ENGINEERED_FEATURES_NS.items():
         for feature in feature_list:
             new_feature_name = feature + "_" + math_type + "_NS"
             # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
@@ -123,7 +120,7 @@ def add_NS_features(data: pd.DataFrame, features_in: List[str], window_size: int
             data[new_feature_name] = data.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
             features_ns.append(new_feature_name)
 
-    data, features_ns = add_lag_features(data, features_ns, 4)
+    data, features_ns = add_lag_features(data, features_ns, 8)
     return data, features_ns
 
 
@@ -152,6 +149,23 @@ def load_test_data_and_preprocess(filepath: Path) -> Tuple[pd.DataFrame, List[st
     data, rf_features_ew = add_EW_features(merged_data, RF_BASE_FEATURES_EW, 6)
     data, rf_features_ns = add_NS_features(data, RF_BASE_FEATURES_NS, 6)
     data = data.bfill()
+
+    # adding smoothing because of some FPs
+    new_feature_name = "Inclination (deg)" + "_" + "std"
+    data[new_feature_name] = data.groupby(level=0, group_keys=False)[["Inclination (deg)"]].apply(
+        lambda x: x.rolling(window=WINDOW_SIZE).std())
+    data[new_feature_name + "smoothed_1"] = data.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
+        lambda x: x[::-1].ewm(span=100, adjust=True).sum()[::-1])
+    data[new_feature_name + "smoothed_2"] = data.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
+        lambda x: x.ewm(span=100, adjust=True).sum())
+    data.bfill(inplace=True)
+    data.ffill(inplace=True)
+    data[new_feature_name + "_smoothed"] = (data[new_feature_name + "smoothed_1"] +
+                                            data[new_feature_name + "smoothed_2"]) / 2
+    rf_features_ew.append(new_feature_name)
+    rf_features_ns.append(new_feature_name)
+    rf_features_ew.append(new_feature_name + "_smoothed")
+    rf_features_ns.append(new_feature_name + "_smoothed")
 
     return data, rf_features_ew, rf_features_ns
 
@@ -248,12 +262,12 @@ def generate_output(pred_ew: Tensor, pred_ns: Tensor, int_to_str_translation: di
 def main():
     start_time = time.perf_counter()
     # Load models for prediction
-    rf_ew = load(TRAINED_MODEL_DIR + "state_classifier_EW_lags.joblib")
-    rf_ns = load(TRAINED_MODEL_DIR + "state_classifier_NS_lags.joblib")
+    rf_ew = load(TRAINED_MODEL_DIR + "state_classifier_EW_HistBoosting.joblib")
+    rf_ns = load(TRAINED_MODEL_DIR + "state_classifier_NS_HistBoosting.joblib")
     # models were trained with more than 4 cpus
-    update_rf_params = {"n_jobs": 4}
-    rf_ew = rf_ew.set_params(**update_rf_params)
-    rf_ns = rf_ns.set_params(**update_rf_params)
+    # update_rf_params = {"n_jobs": 4}
+    # rf_ew = rf_ew.set_params(**update_rf_params)
+    # rf_ns = rf_ns.set_params(**update_rf_params)
     classifier_ew: LitClassifier = LitClassifier.load_from_checkpoint(
         TRAINED_MODEL_DIR + "classification_EW_0.97_101.ckpt")
     classifier_ns: LitClassifier = LitClassifier.load_from_checkpoint(
