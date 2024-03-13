@@ -12,7 +12,7 @@ from lightning.pytorch.callbacks import EarlyStopping
 import lightning as L
 from matplotlib import pyplot as plt
 
-from sklearn.ensemble import RandomForestClassifier, IsolationForest
+from sklearn.ensemble import RandomForestClassifier, IsolationForest, HistGradientBoostingClassifier
 from sklearn.metrics import fbeta_score, make_scorer, precision_recall_curve, PrecisionRecallDisplay
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.inspection import permutation_importance
@@ -25,17 +25,18 @@ from baseline_submissions.evaluation import NodeDetectionEvaluator
 
 
 def add_lag_features(df: pd.DataFrame, feature_cols: List[str], lag_steps: int):
-    new_columns = pd.DataFrame({f"{col}_lag{i}": df.groupby(level=0, group_keys=False)[col].shift(i * 3)
+    new_columns = pd.DataFrame({f"{col}_lag{i}": df.groupby(level=0, group_keys=False)[col].shift(i * 3)  #
                                 for i in range(1, lag_steps + 1)
                                 for col in feature_cols}, index=df.index)
-    new_columns_neg = pd.DataFrame({f"{col}_lag-{i}": df.groupby(level=0, group_keys=False)[col].shift(i * -3)
+    new_columns_neg = pd.DataFrame({f"{col}_lag-{i}": df.groupby(level=0, group_keys=False)[col].shift(i * -3)  #
                                     for i in range(1, lag_steps + 1)
                                     for col in feature_cols}, index=df.index)
     df_out = pd.concat([df, new_columns, new_columns_neg], axis=1)
     features_out = feature_cols + new_columns.columns.tolist() + new_columns_neg.columns.to_list()
     # fill nans
-    df_out = df_out.groupby(level=0, group_keys=False).apply(lambda x: x.bfill())
-    df_out = df_out.groupby(level=0, group_keys=False).apply(lambda x: x.ffill())
+    # df_out = df_out.groupby(level=0, group_keys=False).apply(lambda x: x.bfill())
+    # df_out = df_out.groupby(level=0, group_keys=False).apply(lambda x: x.ffill())
+    df_out.fillna(0, inplace=True)
     return df_out, features_out
 
 
@@ -75,11 +76,11 @@ BASE_FEATURES_NS = [
 ENGINEERED_FEATURES_EW = {
     ("std", lambda x: x.rolling(window=WINDOW_SIZE).std()):
         ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],  # , "RAAN (deg)"
+
 }
 ENGINEERED_FEATURES_NS = {
     ("std", lambda x: x.rolling(window=WINDOW_SIZE).std()):
         ["Semimajor Axis (m)", "Altitude (m)"],
-    # "Semimajor Axis (m)", "Latitude (deg)", "RAAN (deg)", "Inclination (deg)"
 }
 
 DEG_FEATURES = [
@@ -113,6 +114,8 @@ def print_params():
 
 if __name__ == "__main__":
     df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=NUM_CSV_SETS)
+    df.to_pickle("../../dataset/df.pkl")
+    # df = pd.read_pickle("../../dataset/df.pkl")
     # manually remove the change point at time index 0. We know that there is a time change so we do not have to try
     # and predict it
     df.loc[df["TimeIndex"] == 0, "EW"] = 0
@@ -122,8 +125,14 @@ if __name__ == "__main__":
     object_ids = df['ObjectID'].unique()
     train_ids, test_ids = train_test_split(object_ids,
                                            test_size=1 - TRAIN_TEST_RATIO,
-                                           random_state=RANDOM_STATE)
-    rf = RandomForestClassifier(n_estimators=400, random_state=RANDOM_STATE, n_jobs=15, class_weight="balanced")
+                                           random_state=RANDOM_STATE,
+                                           shuffle=True)
+
+    # rf = RandomForestClassifier(n_estimators=200, random_state=RANDOM_STATE, n_jobs=15,
+    #                             class_weight="balanced_subsample", criterion="log_loss")
+    rf = HistGradientBoostingClassifier(random_state=RANDOM_STATE, class_weight="balanced", learning_rate=0.5,
+                                        max_iter=200, early_stopping=False, max_leaf_nodes=None,
+                                        min_samples_leaf=25, l2_regularization=0.1)
 
     # features selected based on rf feature importance.
     features = BASE_FEATURES_EW if DIRECTION == "EW" else BASE_FEATURES_NS
@@ -141,7 +150,24 @@ if __name__ == "__main__":
             features.append(new_feature_name)
 
     # add lags
-    df, features = add_lag_features(df, features, 9)
+    df, features = add_lag_features(df, features, 8)
+
+    # adding smoothing because of some FPs
+    new_feature_name = "Inclination (deg)" + "_" + "std"
+    df[new_feature_name] = df.groupby(level=0, group_keys=False)[["Inclination (deg)"]].apply(
+        lambda x: x.rolling(window=WINDOW_SIZE).std())
+    df[new_feature_name + "smoothed_1"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
+        lambda x: x[::-1].ewm(span=100, adjust=True).sum()[::-1])
+    df[new_feature_name + "smoothed_2"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
+        lambda x: x.ewm(span=100, adjust=True).sum())
+    df.bfill(inplace=True)
+    df.ffill(inplace=True)
+    df[new_feature_name + "_smoothed"] = (df[new_feature_name + "smoothed_1"] +
+                                         df[new_feature_name + "smoothed_2"]) / 2
+    # df[new_feature_name + "smoothed"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
+    # lambda x: x[::-1].rolling(window=170).mean()[::-1])
+    features.append(new_feature_name)
+    features.append(new_feature_name + "_smoothed")
 
     # MANIPULATION DONE. TIME FOR TRAINING
     test_data = df.loc[test_ids].copy()
@@ -167,7 +193,7 @@ if __name__ == "__main__":
     print_params()
     print("Fitting...")
     start_time = timer()
-    # rf = load("../trained_model/state_classifier.joblib")
+    # rf: RandomForestClassifier = load("../trained_model/state_classifier_NS_lags8.joblib")
     rf.fit(train_data[features], train_data[DIRECTION])
     print(f"Took: {timer() - start_time:.3f} seconds")
     # Write classifier to disk
@@ -245,20 +271,21 @@ if __name__ == "__main__":
     print(f'Recall: {recall:.2f}')
     print(f'F2: {f2:.2f}')
 
-    # feature importance with permutation, more robust or smth like that
-    start_time = timer()
-    f2_scorer = make_scorer(fbeta_score, beta=2)
-    result = permutation_importance(rf, test_data[features], test_data[DIRECTION].to_numpy(), n_repeats=5,
-                                    random_state=RANDOM_STATE, n_jobs=2, scoring=f2_scorer)
-    elapsed_time = timer() - start_time
-    print(f"Elapsed time to compute the importances: {elapsed_time:.3f} seconds")
-    forest_importances = pd.Series(result.importances_mean, index=features)
-    fig, ax = plt.subplots()
-    forest_importances.plot.bar(yerr=result.importances_std, ax=ax)
-    ax.set_title("Feature importances using permutation on full model")
-    ax.set_ylabel("Mean accuracy decrease")
-    fig.tight_layout()
-    plt.show()
-
-    PrecisionRecallDisplay.from_estimator(rf, test_data[features], test_data[DIRECTION], name="RF", plot_chance_level=True)
-    plt.show()
+    # # feature importance with permutation, more robust or smth like that
+    # start_time = timer()
+    # f2_scorer = make_scorer(fbeta_score, beta=2)
+    # result = permutation_importance(rf, test_data[features], test_data[DIRECTION].to_numpy(), n_repeats=5,
+    #                                 random_state=RANDOM_STATE, n_jobs=2, scoring=f2_scorer)
+    # elapsed_time = timer() - start_time
+    # print(f"Elapsed time to compute the importances: {elapsed_time:.3f} seconds")
+    # forest_importances = pd.Series(result.importances_mean, index=features)
+    # fig, ax = plt.subplots()
+    # forest_importances.plot.bar(yerr=result.importances_std, ax=ax)
+    # ax.set_title("Feature importances using permutation on full model")
+    # ax.set_ylabel("Mean accuracy decrease")
+    # fig.tight_layout()
+    # plt.show()
+    #
+    # PrecisionRecallDisplay.from_estimator(rf, test_data[features], test_data[DIRECTION], name="RF",
+    #                                       plot_chance_level=True)
+    # plt.show()
