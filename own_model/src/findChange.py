@@ -18,6 +18,7 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.inspection import permutation_importance
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
+from xgboost import XGBClassifier
 
 from own_model.src.dataset_manip import load_data, state_change_eval, MyDataset
 from own_model.src.myModel import LitChangePointClassifier
@@ -95,7 +96,7 @@ DEG_FEATURES = [
 WINDOW_SIZE = 6
 TRAIN_TEST_RATIO = 0.8
 RANDOM_STATE = 42
-DIRECTION = "EW"
+DIRECTION = "NS"
 NUM_CSV_SETS = -1
 
 
@@ -113,10 +114,11 @@ def print_params():
 
 
 if __name__ == "__main__":
-    df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=NUM_CSV_SETS)
-    df.to_pickle("../../dataset/df.pkl")
-    # df = pd.read_pickle("../../dataset/df.pkl")
-    # manually remove the change point at time index 0. We know that there is a time change so we do not have to try
+    # df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=NUM_CSV_SETS)
+    # df.to_pickle("../../dataset/df.pkl")
+    df: pd.DataFrame = pd.read_pickle("../../dataset/df.pkl")
+
+    # manually remove the change point at time index 0. We know that there is a time change, so we do not have to try
     # and predict it
     df.loc[df["TimeIndex"] == 0, "EW"] = 0
     df.loc[df["TimeIndex"] == 0, "NS"] = 0
@@ -130,9 +132,16 @@ if __name__ == "__main__":
 
     # rf = RandomForestClassifier(n_estimators=200, random_state=RANDOM_STATE, n_jobs=15,
     #                             class_weight="balanced_subsample", criterion="log_loss")
-    rf = HistGradientBoostingClassifier(random_state=RANDOM_STATE, class_weight="balanced", learning_rate=0.5,
-                                        max_iter=200, early_stopping=False, max_leaf_nodes=None,
-                                        min_samples_leaf=25, l2_regularization=0.1)
+    # rf = HistGradientBoostingClassifier(random_state=RANDOM_STATE, class_weight="balanced", learning_rate=0.597289,
+    #                                     max_iter=213, early_stopping=False, max_leaf_nodes=None,
+    #                                     min_samples_leaf=25, l2_regularization=0.1)
+    num_pos = df[DIRECTION].sum()
+    all_samples = df[DIRECTION].shape[0]
+    num_neg = all_samples - num_pos
+    scale_pos = num_neg / num_pos
+
+    rf = XGBClassifier(random_state=RANDOM_STATE, n_estimators=300, max_leaves=0, learning_rate=0.3,
+                       verbosity=2, tree_method="hist", scale_pos_weight=scale_pos, reg_lambda=1.5, max_depth=10)
 
     # features selected based on rf feature importance.
     features = BASE_FEATURES_EW if DIRECTION == "EW" else BASE_FEATURES_NS
@@ -163,7 +172,7 @@ if __name__ == "__main__":
     df.bfill(inplace=True)
     df.ffill(inplace=True)
     df[new_feature_name + "_smoothed"] = (df[new_feature_name + "smoothed_1"] +
-                                         df[new_feature_name + "smoothed_2"]) / 2
+                                          df[new_feature_name + "smoothed_2"]) / 2
     # df[new_feature_name + "smoothed"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
     # lambda x: x[::-1].rolling(window=170).mean()[::-1])
     features.append(new_feature_name)
@@ -173,36 +182,42 @@ if __name__ == "__main__":
     test_data = df.loc[test_ids].copy()
     train_data = df.loc[train_ids].copy()
 
-    # train_data = df.copy()
-
-    # f2_scorer = make_scorer(fbeta_score, beta=2)
-    # param_grid = {
-    #     'ccp_alpha': [0.0, 0.01, 0.04, 0.1],
-    #     'n_estimators': [100, 400, 700]
-    # }
-    # cv_rfc = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5, scoring=f2_scorer,
-    #                       n_jobs=1, verbose=4, refit=False)
-    # start_time = timer()
-    # cv_rfc.fit(df[features], df[DIRECTION])
-    # print(f"Took: {timer() - start_time:.3f} seconds")
-    # print(cv_rfc.best_params_)
-    # print(cv_rfc.best_score_)
-    # print(cv_rfc.cv_results_)
-
     # RF model
     print_params()
     print("Fitting...")
     start_time = timer()
-    # rf: RandomForestClassifier = load("../trained_model/state_classifier_NS_lags8.joblib")
+    # rf = load("../trained_model/state_classifier.joblib")
     rf.fit(train_data[features], train_data[DIRECTION])
     print(f"Took: {timer() - start_time:.3f} seconds")
     # Write classifier to disk
     dump(rf, "../trained_model/state_classifier.joblib", compress=3)
 
     print("Predicting...")
-    train_data["PREDICTED"] = rf.predict(train_data[features])
+    # train_data["PREDICTED"] = rf.predict(train_data[features])
     test_data["PREDICTED"] = rf.predict(test_data[features])
+    predict_proba: np.ndarray = rf.predict_proba(test_data[features])[:, 1]
 
+    # Step 3: Calculate precision, recall for various thresholds
+    precision, recall, thresholds = precision_recall_curve(test_data[DIRECTION], predict_proba)
+    test = PrecisionRecallDisplay(precision, recall)
+    test.plot()
+    plt.show()
+
+    # # Calculate F2 scores for each threshold
+    # beta = 3
+    # f2_scores = ((1 + beta*beta) * precision * recall) / (((beta*beta) * precision) + recall)
+    # # Avoid division by zero
+    # f2_scores = np.nan_to_num(f2_scores)
+    #
+    # # Step 4: Find the threshold that maximizes F2 score
+    # max_f2_index = np.argmax(f2_scores)
+    # # max_f2_index = 670603
+    # best_threshold = thresholds[max_f2_index]
+    # best_f2_score = f2_scores[max_f2_index]
+    #
+    # print(f"Best threshold: {best_threshold}")
+    # print(f"Best F2 score: {best_f2_score}")
+    # test_data["PREDICTED"] = (predict_proba >= best_threshold).astype('int')
     # POST PROCESSING
     print("Postprocessing")
     test_data["PREDICTED_sum"] = test_data["PREDICTED"].rolling(5, center=True).sum()
