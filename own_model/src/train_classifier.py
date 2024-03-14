@@ -17,15 +17,15 @@ from own_model.src.myModel import LitClassifier
 
 SHUFFLE_DATA = False
 FEATURES_NS = [
-    # "Eccentricity",
-    # "Semimajor Axis (m)",
+    "Eccentricity",
+    "Semimajor Axis (m)",
     "Inclination (deg)",
     "RAAN (deg)",
-    # "Argument of Periapsis (deg)",
-    # "True Anomaly (deg)",
-    # "Latitude (deg)",
+    "Argument of Periapsis (deg)",
+    "True Anomaly (deg)",
+    "Latitude (deg)",
     "Longitude (deg)",
-    # "Altitude (m)",
+    "Altitude (m)",
     # "X (m)",
     # "Y (m)",
     # "Z (m)",
@@ -34,30 +34,40 @@ FEATURES_NS = [
     # "Vz (m/s)"
 ]
 FEATURES_EW = [
-    # "Eccentricity",
-    # "Semimajor Axis (m)",
+    "Eccentricity",
+    "Semimajor Axis (m)",
     "Inclination (deg)",
     "RAAN (deg)",
-    # "Argument of Periapsis (deg)",
-    # "True Anomaly (deg)",
-    # "Latitude (deg)",
+    "Argument of Periapsis (deg)",
+    "True Anomaly (deg)",
+    "Latitude (deg)",
     "Longitude (deg)",
-    # "Altitude (m)",
-    # "X (m)",
-    # "Y (m)",
-    # "Z (m)",
-    # "Vx (m/s)",
-    # "Vy (m/s)",
-    # "Vz (m/s)"
+    "Altitude (m)",
 ]
 
 ENGINEERED_FEATURES_EW = {
     ("std", lambda x: x.rolling(window=6).std()):
-        ["Semimajor Axis (m)", "Altitude (m)"],  # , "RAAN (deg)",, "Eccentricity"
+        ["Eccentricity",
+         "Semimajor Axis (m)",
+         "Inclination (deg)",
+         "RAAN (deg)",
+         "Argument of Periapsis (deg)",
+         "True Anomaly (deg)",
+         "Latitude (deg)",
+         "Longitude (deg)",
+         "Altitude (m)", ],
 }
 ENGINEERED_FEATURES_NS = {
     ("std", lambda x: x.rolling(window=6).std()):
-        ["Semimajor Axis (m)", "Altitude (m)"],
+        ["Eccentricity",
+         "Semimajor Axis (m)",
+         "Inclination (deg)",
+         "RAAN (deg)",
+         "Argument of Periapsis (deg)",
+         "True Anomaly (deg)",
+         "Latitude (deg)",
+         "Longitude (deg)",
+         "Altitude (m)", ],
     # "Semimajor Axis (m)", "Latitude (deg)", "RAAN (deg)", "Inclination (deg)"
 }
 
@@ -84,10 +94,10 @@ TGT_SIZE = 5  # based on the dataset dict
 TRAIN_TEST_RATIO = 0.8
 TRAIN_VAL_RATION = 0.8
 BATCH_SIZE = 20
-WINDOW_SIZE = 101
+WINDOW_SIZE = 51
 EPOCHS = 400
-DIRECTION = "NS"
-NUM_WORKERS = 4
+DIRECTION = "EW"
+NUM_WORKERS = 8
 NUM_CSV_SETS = -1
 FEATURES = FEATURES_EW if DIRECTION == "EW" else FEATURES_NS
 SRC_SIZE = len(FEATURES)
@@ -101,7 +111,7 @@ if __name__ == "__main__":
     data: pd.DataFrame = pd.read_pickle("../../dataset/data.pkl")
     labels: pd.DataFrame = pd.read_pickle("../../dataset/labels.pkl")
     # Train only first sample or without first sample
-    labels = labels[labels['TimeIndex'] == 0]
+    labels = labels[labels['TimeIndex'] != 0]
 
     # unwrap
     data[DEG_FEATURES] = np.unwrap(np.deg2rad(data[DEG_FEATURES]))
@@ -110,7 +120,7 @@ if __name__ == "__main__":
     feature_dict = ENGINEERED_FEATURES_EW if DIRECTION == "EW" else ENGINEERED_FEATURES_NS
     for (math_type, lambda_fnc), feature_list in feature_dict.items():
         for feature in feature_list:
-            new_feature_name = feature + "_" + math_type + "_" + DIRECTION
+            new_feature_name = feature + "_" + math_type
             # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
             # and then added back to the DF, backfill to fill NANs resulting from window
             data[new_feature_name] = data.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
@@ -161,15 +171,15 @@ if __name__ == "__main__":
     # get actual model
     # have to (re)set size because features were added
     SRC_SIZE = len(FEATURES)
-    model = LitClassifier(WINDOW_SIZE, SRC_SIZE, 1e-3, TGT_SIZE)
-    early_stop_callback = EarlyStopping(monitor="val_MulticlassFBetaScore", mode="max", patience=4)
+    model = LitClassifier(WINDOW_SIZE, SRC_SIZE, 1e-4, TGT_SIZE)
+    early_stop_callback = EarlyStopping(monitor="val_MulticlassFBetaScore", mode="max", patience=40)
     checkpoint_callback = ModelCheckpoint(monitor="val_MulticlassFBetaScore",
                                           mode="max",
                                           dirpath="lightning_logs/best_checkpoints",
                                           filename='classification_{epoch:02d}_{val_MulticlassFBetaScore:.2f}')
     trainer = L.Trainer(max_epochs=EPOCHS, enable_progress_bar=True,
                         callbacks=[early_stop_callback, checkpoint_callback],
-                        check_val_every_n_epoch=3, accumulate_grad_batches=3)
+                        check_val_every_n_epoch=1)  # , accumulate_grad_batches=3
     # LR finder, didnt really help me for first sample
     # tuner = Tuner(trainer)
     # # Run learning rate finder
