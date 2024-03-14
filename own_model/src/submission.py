@@ -63,6 +63,11 @@ CLASSIFIER_FEATURES = ["Eccentricity",
                        # "Vy (m/s)",
                        # "Vz (m/s)"
                        ]
+ENGINEERED_FEATURES_CLASSIFIER = {
+    ("std", lambda x: x.rolling(window=WINDOW_SIZE).std()):
+        ["Eccentricity", "Semimajor Axis (m)", "Inclination (deg)", "RAAN (deg)", "Argument of Periapsis (deg)",
+         "True Anomaly (deg)", "Latitude (deg)", "Longitude (deg)", "Altitude (m)"]
+}
 
 DEG_FEATURES = [
     "Inclination (deg)",
@@ -168,6 +173,20 @@ def load_test_data_and_preprocess(filepath: Path) -> Tuple[pd.DataFrame, List[st
     rf_features_ns.append(new_feature_name + "_smoothed")
 
     return data, rf_features_ew, rf_features_ns
+
+
+def classifier_preprocessing(df: pd.DataFrame, features_in: List[str]) -> Tuple[pd.DataFrame, List[str]]:
+    features_out = features_in.copy()
+    # FEATURE ENGINEERING
+    for (math_type, lambda_fnc), feature_list in ENGINEERED_FEATURES_CLASSIFIER.items():
+        for feature in feature_list:
+            new_feature_name = feature + "_" + math_type
+            # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
+            # and then added back to the DF
+            df[new_feature_name] = df.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
+            features_out.append(new_feature_name)
+
+    return df, features_out
 
 
 def changepoint_postprocessing(df: pd.DataFrame, window_size: int) -> pd.DataFrame:
@@ -276,13 +295,13 @@ def main():
     # rf_ew = rf_ew.set_params(**update_rf_params)
     # rf_ns = rf_ns.set_params(**update_rf_params)
     classifier_ew: LitClassifier = LitClassifier.load_from_checkpoint(
-        TRAINED_MODEL_DIR + "classification_EW_0.97_101.ckpt")
+        TRAINED_MODEL_DIR + "classification_epoch=60_val_MulticlassFBetaScore=0.97_EW_51_3c_2l.ckpt")
     classifier_ns: LitClassifier = LitClassifier.load_from_checkpoint(
-        TRAINED_MODEL_DIR + "classification_NS_0.97_101.ckpt")
+        TRAINED_MODEL_DIR + "classification_epoch=37_val_MulticlassFBetaScore=0.99_NS_101_3c_2l.ckpt")
     classifier_first_ew: LitClassifier = LitClassifier.load_from_checkpoint(
-        TRAINED_MODEL_DIR + "classification_EW_0.92_1501_first.ckpt")
+        TRAINED_MODEL_DIR + "classification_epoch=67_val_MulticlassFBetaScore=0.95_EW_1501_3c_2l_first.ckpt")
     classifier_first_ns: LitClassifier = LitClassifier.load_from_checkpoint(
-        TRAINED_MODEL_DIR + "classification_NS_0.91_2001_first.ckpt")
+        TRAINED_MODEL_DIR + "classification_epoch=64_val_MulticlassFBetaScore=0.96_NS_2001_3c_2l_first.ckpt")
     # Load scaler for LitClassifier
     scaler: StandardScaler = load(TRAINED_MODEL_DIR + "scaler.joblib")
 
@@ -303,19 +322,19 @@ def main():
     df = changepoint_postprocessing(df, 5)
 
     # CHANGEPOINTS DONE. NOW CLASSIFICAITON ----------------------------------------------------------------------------
-
+    df, classifier_features = classifier_preprocessing(df, CLASSIFIER_FEATURES)
     # EW and NS have the same classification features
-    df.loc[:, CLASSIFIER_FEATURES] = scaler.transform(df.loc[:, CLASSIFIER_FEATURES])
+    df.loc[:, classifier_features] = scaler.transform(df.loc[:, classifier_features])
     # Manually set the state change at timeindex 0
     df["PREDICTED_FIRST_EW"] = 0
     df["PREDICTED_FIRST_NS"] = 0
     df.loc[df.loc[:, "TimeIndex"] == 0, "PREDICTED_FIRST_EW"] = 1
     df.loc[df.loc[:, "TimeIndex"] == 0, "PREDICTED_FIRST_NS"] = 1
 
-    ds_ew = SubmissionWindowDataset(df, CLASSIFIER_FEATURES, "PREDICTED_CLEAN_EW", window_size=101)
-    ds_ns = SubmissionWindowDataset(df, CLASSIFIER_FEATURES, "PREDICTED_CLEAN_NS", window_size=101)
-    ds_first_ew = SubmissionWindowDataset(df, CLASSIFIER_FEATURES, "PREDICTED_FIRST_EW", window_size=1501)
-    ds_first_ns = SubmissionWindowDataset(df, CLASSIFIER_FEATURES, "PREDICTED_FIRST_NS", window_size=2001)
+    ds_ew = SubmissionWindowDataset(df, classifier_features, "PREDICTED_CLEAN_EW", window_size=51)
+    ds_ns = SubmissionWindowDataset(df, classifier_features, "PREDICTED_CLEAN_NS", window_size=101)
+    ds_first_ew = SubmissionWindowDataset(df, classifier_features, "PREDICTED_FIRST_EW", window_size=1501)
+    ds_first_ns = SubmissionWindowDataset(df, classifier_features, "PREDICTED_FIRST_NS", window_size=2001)
     dataloader_ew = DataLoader(ds_ew, batch_size=20, num_workers=1)
     dataloader_ns = DataLoader(ds_ns, batch_size=20, num_workers=1)
     dataloader_first_ew = DataLoader(ds_first_ew, batch_size=20, num_workers=1)

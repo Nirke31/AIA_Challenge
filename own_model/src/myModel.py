@@ -266,7 +266,9 @@ class LitClassifier(L.LightningModule):
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-        return optimizer
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.2,
+                                                               patience=20, min_lr=5e-5)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
 
     def forward(self, src: Tensor, *args: Any, **kwargs: Any) -> Tensor:
         # Reshape input to (batch_size, feature_size, sequence_len)
@@ -356,6 +358,7 @@ class LitClassifier(L.LightningModule):
     def on_validation_epoch_end(self) -> None:
         output = self.val_metrics.compute()
         self.log_dict(output)
+        # reset for early stop
         self.val_metrics.reset()
 
     def on_test_end(self) -> None:
@@ -489,10 +492,12 @@ class LitChangePointClassifier(L.LightningModule):
 class Autoencoder(L.LightningModule):
     def __init__(self, num_input: int, num_hid: int, num_bottleneck: int, act_fn: Callable = nn.GELU):
         super().__init__()
+        self.save_hyperparameters()
         self.encoder = nn.Sequential(
             nn.Linear(num_input, num_hid),
             act_fn(),  # inplace=True, do I need this?
-            nn.Linear(num_hid, num_bottleneck)
+            nn.Linear(num_hid, num_bottleneck),
+            act_fn()
         )
         self.decoder = nn.Sequential(
             nn.Linear(num_bottleneck, num_hid),
@@ -536,15 +541,17 @@ class Autoencoder(L.LightningModule):
         self.log("val_loss", loss)
         return
 
-    def predict_step(self, batch, *args: Any, **kwargs: Any) -> Any:
-        # not really a predict step but an encode step
-        x = self.encoder(batch)
-        return x
+    def encode_features(self, data):
+        self.eval()
+        with torch.no_grad():
+            encoded = self.encoder(data)
+
+        return encoded
 
     def on_train_epoch_end(self) -> None:
         self.loss.append(np.mean(self.loss_epoch))
         self.loss_epoch = []
-    def on_train_end(self) -> None:
-        plt.plot(np.arange(len(self.loss)),  self.loss)
-        plt.show()
 
+    def on_train_end(self) -> None:
+        plt.plot(np.arange(len(self.loss)), self.loss)
+        plt.show()
