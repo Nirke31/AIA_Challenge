@@ -14,18 +14,18 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from dataset_manip import load_data, split_train_test, pad_sequence_vec, SubmissionChangePointDataset
-from changeforest import changeforest
 from sklearn.preprocessing import StandardScaler
 from baseline_submissions.evaluation import NodeDetectionEvaluator
 
 import lightning as L
+
+from statsmodels.tsa.seasonal import seasonal_decompose
 
 from own_model.src.multiScale1DResNet import SimpleResNet
 from own_model.src.myModel import LitChangePointClassifier, LitClassifier
 
 train_data_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/train"
 train_label_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/train_labels.csv"
-
 
 # print("Load whole dataset")
 # load1 = timer()
@@ -380,12 +380,24 @@ train_label_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/
 #     return df_out, features_out
 #
 #
-# # LOOKING AT BOTH
+# LOOKING AT BOTH
 # ground_truth = pd.read_csv("../../dataset/phase_1_v3/train_labels.csv")
 # own = pd.read_csv("../../submission/submission_91percent.csv")
 # nodeEval = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
-# for id in range(1012, 2100, 1):
+# for id in range(1059, 2100, 1):
 #     data_df = pd.read_csv(train_data_str + f"/{id}.csv")
+#     # data_df = data_df.set_index("Timestamp")
+#     data_df.drop("Timestamp", axis=1, inplace=True)
+#     times = pd.date_range('2020-01-01', periods=data_df.shape[0], freq='M')
+#     data_df.index = times
+#
+#     for x in ["Eccentricity", "Semimajor Axis (m)", "Inclination (deg)", "RAAN (deg)", "Argument of Periapsis (deg)",
+#               "True Anomaly (deg)", "Latitude (deg)", "Longitude (deg)", "Altitude (m)"]:
+#
+#         decompose_result = seasonal_decompose(data_df[x], period=12, model="additive")
+#         decompose_result.plot()
+#         plt.show()
+
 #     labels = pd.read_csv(train_label_str)
 #     data_df.drop(labels='Timestamp', axis=1, inplace=True)
 #     data_df['TimeIndex'] = range(len(data_df))
@@ -577,28 +589,28 @@ train_label_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/
 # df.hist(bins=15)
 # plt.show()
 
-# ground_truth = pd.read_csv("../../dataset/phase_1_v3/train_labels.csv")
-# own = pd.read_csv("../../submission/submission.csv")
-# test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
-# oids = own["ObjectID"].unique().tolist()
-# wrong_ids = []
-# wrong_FP = []
-# wrong_FN = []
-# for id in oids:
-#     tp, fp, fn, gt_object, p_object = test.evaluate(id)
-#     if fp > 0:
-#         wrong_FP.append(id)
-#     if fn > 0:
-#         wrong_FN.append(id)
-#     if fp > 0 or fn > 0:
-#         wrong_ids.append(id)
-#
-# print(f"Num wrong time series: {len(wrong_ids)}")
-# print(f"Num time series with FN: {len(wrong_FN)}")
-# print(f"Num time series with FP: {len(wrong_FP)}")
-# print(wrong_ids)
-# for id in wrong_ids:
-#     test.plot(id)
+ground_truth = pd.read_csv("../../dataset/phase_1_v3/train_labels.csv")
+own = pd.read_csv("../../submission/submission.csv")
+test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
+oids = own["ObjectID"].unique().tolist()
+wrong_ids = []
+wrong_FP = []
+wrong_FN = []
+for id in oids:
+    tp, fp, fn, gt_object, p_object = test.evaluate(id)
+    if fp > 0:
+        wrong_FP.append(id)
+    if fn > 0:
+        wrong_FN.append(id)
+    if fp > 0 or fn > 0:
+        wrong_ids.append(id)
+
+print(f"Num wrong time series: {len(wrong_ids)}")
+print(f"Num time series with FN: {len(wrong_FN)}")
+print(f"Num time series with FP: {len(wrong_FP)}")
+print(wrong_ids)
+for id in wrong_ids:
+    test.plot(id)
 
 # precision, recall, f2, rmse = test.score(debug=True)
 # print(f'Precision: {precision:.2f}')
