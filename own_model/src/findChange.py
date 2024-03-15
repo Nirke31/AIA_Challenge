@@ -11,6 +11,7 @@ from joblib import dump, load
 from lightning.pytorch.callbacks import EarlyStopping
 import lightning as L
 from matplotlib import pyplot as plt
+from sklearn.calibration import CalibratedClassifierCV
 
 from sklearn.ensemble import RandomForestClassifier, IsolationForest, HistGradientBoostingClassifier
 from sklearn.metrics import fbeta_score, make_scorer, precision_recall_curve, PrecisionRecallDisplay
@@ -20,9 +21,43 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
 from xgboost import XGBClassifier
 
+from scipy.signal import find_peaks_cwt, find_peaks, peak_prominences, savgol_filter
+
+
 from own_model.src.dataset_manip import load_data, state_change_eval, MyDataset
 from own_model.src.myModel import LitChangePointClassifier
 from baseline_submissions.evaluation import NodeDetectionEvaluator
+
+
+def get_peaks(x: pd.DataFrame):
+    objectID = x.index.get_level_values(0).unique()
+    x["smoothed"] = savgol_filter(x["Inclination (deg)_std"], 13, 3)
+
+    inc_std_average = x["smoothed"].median()
+    max_std = x["smoothed"].max()
+    # print(f"ObjectID: {objectID}, Median: {inc_std_average} and max: {max_std}")
+
+    peaks, _ = find_peaks(x["smoothed"], height=inc_std_average * 4)
+    # print(peaks)
+
+    x.loc[(objectID, peaks), "peak"] = 1
+    return x
+
+
+def apply_dynamic_weighting(x: pd.DataFrame):
+    index = np.arange(x.shape[0])
+    peak_index: np.array = index[x["peak"] == 1]
+
+    # if we have 0 or just one peak we cannot calculate a period
+    if peak_index.size > 1:
+        # Calculate distance between consecutive peaks
+        distance = np.diff(peak_index)
+        # Determine expected period, may be a bit broke if we only have a few distances
+        period = int(np.median(distance))
+
+        x["peak_exp"] = x["peak"][::-1].rolling(window=period).max().bfill()[::-1]
+        x["peak_exp"] = x["peak_exp"].ewm(span=period).sum()
+    return x
 
 
 def add_lag_features(df: pd.DataFrame, feature_cols: List[str], lag_steps: int):
@@ -57,7 +92,7 @@ BASE_FEATURES_EW = [
 ]
 
 BASE_FEATURES_NS = [
-    # "Eccentricity",
+    "Eccentricity",
     # "Semimajor Axis (m)",
     "Inclination (deg)",
     "RAAN (deg)",
@@ -76,12 +111,12 @@ BASE_FEATURES_NS = [
 
 ENGINEERED_FEATURES_EW = {
     ("std", lambda x: x.rolling(window=WINDOW_SIZE).std()):
-        ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity"],  # , "RAAN (deg)"
+        ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity", "Inclination (deg)"],  # , "RAAN (deg)"
 
 }
 ENGINEERED_FEATURES_NS = {
     ("std", lambda x: x.rolling(window=WINDOW_SIZE).std()):
-        ["Semimajor Axis (m)", "Altitude (m)"],
+        ["Semimajor Axis (m)", "Altitude (m)", "Eccentricity", "Inclination (deg)"],
 }
 
 DEG_FEATURES = [
@@ -140,8 +175,10 @@ if __name__ == "__main__":
     num_neg = all_samples - num_pos
     scale_pos = num_neg / num_pos
 
-    rf = XGBClassifier(random_state=RANDOM_STATE, n_estimators=300, max_leaves=0, learning_rate=0.3,
-                       verbosity=2, tree_method="hist", scale_pos_weight=scale_pos, reg_lambda=1.5, max_depth=10)
+    # rf = XGBClassifier(random_state=RANDOM_STATE, n_estimators=300, max_leaves=0, learning_rate=0.3,
+    #                    verbosity=2, tree_method="hist", scale_pos_weight=scale_pos, reg_lambda=1.5, max_depth=11
+    rf = XGBClassifier(random_state=RANDOM_STATE, n_estimators=300, max_leaves=0, learning_rate=0.3, max_bin=256 * 8,
+                       verbosity=2, tree_method="hist", scale_pos_weight=scale_pos, reg_lambda=0.5, max_depth=12)
 
     # features selected based on rf feature importance.
     features = BASE_FEATURES_EW if DIRECTION == "EW" else BASE_FEATURES_NS
@@ -152,31 +189,46 @@ if __name__ == "__main__":
     feature_dict = ENGINEERED_FEATURES_EW if DIRECTION == "EW" else ENGINEERED_FEATURES_NS
     for (math_type, lambda_fnc), feature_list in feature_dict.items():
         for feature in feature_list:
-            new_feature_name = feature + "_" + math_type + "_" + DIRECTION
+            new_feature_name = feature + "_" + math_type
             # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
             # and then added back to the DF, backfill to fill NANs resulting from window
             df[new_feature_name] = df.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
             features.append(new_feature_name)
 
+    # already allocating features space
+    df["peak"] = 0.0
+    df["peak_exp"] = 0.0
+    df["smoothed"] = 0.0
+
+    # get peaks
+    df = df.groupby(level=0, group_keys=False).apply(get_peaks)
+    # weight peaks
+    df = df.groupby(level=0, group_keys=False).apply(apply_dynamic_weighting)
+    features.append("peak_exp")
+
     # add lags
     df, features = add_lag_features(df, features, 8)
+    #
+    # # adding smoothing because of some FPs
+    # new_feature_name = "Inclination (deg)" + "_" + "std"
+    # df[new_feature_name] = df.groupby(level=0, group_keys=False)[["Inclination (deg)"]].apply(
+    #     lambda x: x.rolling(window=WINDOW_SIZE).std())
+    # df[new_feature_name + "smoothed_1"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
+    #     lambda x: x[::-1].ewm(span=100, adjust=True).sum()[::-1])
+    # df[new_feature_name + "smoothed_2"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
+    #     lambda x: x.ewm(span=100, adjust=True).sum())
+    # df.bfill(inplace=True)
+    # df.ffill(inplace=True)
+    # df[new_feature_name + "_smoothed"] = (df[new_feature_name + "smoothed_1"] +
+    #                                       df[new_feature_name + "smoothed_2"]) / 2
+    # # test features
+    # test_features_name = "inc_std_sum"
+    # df[test_features_name] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
+    #     lambda x: x.rolling(window=170).max())
+    # features.append(test_features_name)
+    # df.bfill(inplace=True)
+    # df.ffill(inplace=True)
 
-    # adding smoothing because of some FPs
-    new_feature_name = "Inclination (deg)" + "_" + "std"
-    df[new_feature_name] = df.groupby(level=0, group_keys=False)[["Inclination (deg)"]].apply(
-        lambda x: x.rolling(window=WINDOW_SIZE).std())
-    df[new_feature_name + "smoothed_1"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
-        lambda x: x[::-1].ewm(span=100, adjust=True).sum()[::-1])
-    df[new_feature_name + "smoothed_2"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
-        lambda x: x.ewm(span=100, adjust=True).sum())
-    df.bfill(inplace=True)
-    df.ffill(inplace=True)
-    df[new_feature_name + "_smoothed"] = (df[new_feature_name + "smoothed_1"] +
-                                          df[new_feature_name + "smoothed_2"]) / 2
-    # df[new_feature_name + "smoothed"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
-    # lambda x: x[::-1].rolling(window=170).mean()[::-1])
-    features.append(new_feature_name)
-    features.append(new_feature_name + "_smoothed")
 
     # MANIPULATION DONE. TIME FOR TRAINING
     test_data = df.loc[test_ids].copy()
@@ -191,6 +243,9 @@ if __name__ == "__main__":
     print(f"Took: {timer() - start_time:.3f} seconds")
     # Write classifier to disk
     dump(rf, "../trained_model/state_classifier.joblib", compress=3)
+
+    # calibrated_clf = CalibratedClassifierCV(estimator=rf, method='isotonic')
+    # calibrated_clf.fit(train_data[features], train_data[DIRECTION])
 
     print("Predicting...")
     # train_data["PREDICTED"] = rf.predict(train_data[features])
@@ -224,6 +279,10 @@ if __name__ == "__main__":
     test_data["PREDICTED_CLEAN"] = 0
     test_data.loc[test_data["PREDICTED_sum"] >= 5, "PREDICTED_CLEAN"] = 1
 
+    # removing two changepoints that are directly next to each other.
+    diff = test_data["PREDICTED_CLEAN"].shift(1, fill_value=0) & test_data["PREDICTED_CLEAN"]
+    test_data["PREDICTED_CLEAN"] -= diff
+
     # set start node manually
     test_data.loc[test_data["TimeIndex"] == 0, "PREDICTED_CLEAN"] = 1
 
@@ -249,6 +308,44 @@ if __name__ == "__main__":
     print(f'F2: {f2:.2f}')
     print(f'RMSE: {rmse:.2f}')
 
+    oids = changepoints["ObjectID"].unique().tolist()
+    wrong_ids = []
+    wrong_FP = []
+    wrong_FN = []
+    for id in oids:
+        tp, fp, fn, gt_object, p_object = eval.evaluate(id)
+        if fp > 0:
+            wrong_FP.append(id)
+        if fn > 0:
+            wrong_FN.append(id)
+        if fp > 0 or fn > 0:
+            wrong_ids.append(id)
+
+    print(f"Num wrong time series: {len(wrong_ids)}")
+    print(f"Num time series with FN: {len(wrong_FN)}")
+    print(f"Num time series with FP: {len(wrong_FP)}")
+    print(wrong_ids)
+    features_plot = [
+        "Eccentricity",
+        "Eccentricity_std",
+        "Semimajor Axis (m)",
+        "Inclination (deg)",
+        "RAAN (deg)",
+        # "Argument of Periapsis (deg)",
+        # "True Anomaly (deg)",
+        # "Latitude (deg)",
+        # "Longitude (deg)",
+        "smoothed",
+        "peak",
+        "peak_exp",
+        "NS",
+        "PREDICTED",
+        "PREDICTED_sum",
+        "PREDICTED_CLEAN"]
+    for id in wrong_ids:
+        test_data.loc[test_data["ObjectID"] == id, features_plot].plot(subplots=True, title=id)
+        eval.plot(id)
+
     # eval.plot(157)  # object_ids[0]
 
     # print("TRAIN RESULTS:")
@@ -269,22 +366,29 @@ if __name__ == "__main__":
     # print(f'Recall: {recall:.2f}')
     # print(f'F2: {f2:.2f}')
     #
-    print("TEST RESULTS:")
-    total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(test_data["PREDICTED"].to_numpy()),
-                                                               torch.tensor(test_data[DIRECTION].to_numpy()))
-    precision = total_tp / (total_tp + total_fp) \
-        if (total_tp + total_fp) != 0 else 0
-    recall = total_tp / (total_tp + total_fn) \
-        if (total_tp + total_fn) != 0 else 0
-    f2 = (5 * total_tp) / (5 * total_tp + 4 * total_fn + total_fp) \
-        if (5 * total_tp + 4 * total_fn + total_fp) != 0 else 0
-    print(f"Total TPs: {total_tp}")
-    print(f"Total FPs: {total_fp}")
-    print(f"Total FNs: {total_fn}")
-    print(f"Total TNs: {total_tn}")
-    print(f'Precision: {precision:.2f}')
-    print(f'Recall: {recall:.2f}')
-    print(f'F2: {f2:.2f}')
+    # print("TEST RESULTS:")
+    # total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(test_data["PREDICTED"].to_numpy()),
+    #                                                            torch.tensor(test_data[DIRECTION].to_numpy()))
+    # precision = total_tp / (total_tp + total_fp) \
+    #     if (total_tp + total_fp) != 0 else 0
+    # recall = total_tp / (total_tp + total_fn) \
+    #     if (total_tp + total_fn) != 0 else 0
+    # f2 = (5 * total_tp) / (5 * total_tp + 4 * total_fn + total_fp) \
+    #     if (5 * total_tp + 4 * total_fn + total_fp) != 0 else 0
+    # print(f"Total TPs: {total_tp}")
+    # print(f"Total FPs: {total_fp}")
+    # print(f"Total FNs: {total_fn}")
+    # print(f"Total TNs: {total_tn}")
+    # print(f'Precision: {precision:.2f}')
+    # print(f'Recall: {recall:.2f}')
+    # print(f'F2: {f2:.2f}')
+    #
+    # # feature importance with xgboost
+    # feature_importances = rf.feature_importances_
+    # xgb_importances = pd.Series(feature_importances, index=features)
+    # xgb_importances.plot.bar()
+    # plt.tight_layout()
+    # plt.show()
 
     # # feature importance with permutation, more robust or smth like that
     # start_time = timer()
