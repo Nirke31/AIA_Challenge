@@ -1,10 +1,11 @@
+import os
 from typing import List
 
 import optuna
 from numpy.lib.stride_tricks import sliding_window_view
 from optuna import create_study
 
-from sklearn.model_selection import cross_val_score, KFold
+from sklearn.model_selection import cross_val_score, KFold, BaseCrossValidator, GroupKFold
 from pathlib import Path
 from timeit import default_timer as timer
 
@@ -27,7 +28,7 @@ from xgboost import XGBClassifier
 from own_model.src.dataset_manip import load_data, state_change_eval, MyDataset
 
 
-def custom_loss_func(ground_truth: np.array, predictions: np.array, **kwargs):
+def custom_loss_func(ground_truth: pd.Series, predictions: np.array, **kwargs):
     predicted_sum = np.convolve(predictions, np.ones(5), mode="same")
     predicted = np.zeros(predicted_sum.shape[0])
     predicted[predicted_sum >= 5] = 1
@@ -82,14 +83,37 @@ def load_stuff():
 
     add_lag_features(df, features, lag_steps=8)
 
+    # adding smoothing because of some FPs
+    new_feature_name = "Inclination (deg)" + "_" + "std"
+    df[new_feature_name] = df.groupby(level=0, group_keys=False)[["Inclination (deg)"]].apply(
+        lambda x: x.rolling(window=6).std())
+    df[new_feature_name + "smoothed_1"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
+        lambda x: x[::-1].ewm(span=100, adjust=True).sum()[::-1])
+    df[new_feature_name + "smoothed_2"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
+        lambda x: x.ewm(span=100, adjust=True).sum())
+    df.bfill(inplace=True)
+    df.ffill(inplace=True)
+    df[new_feature_name + "_smoothed"] = (df[new_feature_name + "smoothed_1"] +
+                                          df[new_feature_name + "smoothed_2"]) / 2
+    # df[new_feature_name + "smoothed"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
+    # lambda x: x[::-1].rolling(window=170).mean()[::-1])
+    features.append(new_feature_name)
+    features.append(new_feature_name + "_smoothed")
+
     return df, features
 
 
 def objective(trial):
+    # learning_rate = trial.suggest_float("learning_rate", 0.1, 0.9, log=True)
+    # n_estimators = trial.suggest_int("n_estimators", 50, 400)
+    # reg_lambda = trial.suggest_float("reg_lambda", 0.01, 2.0, log=True)
+    # max_depth = trial.suggest_int("max_depth", 2, 12)
+    # gamma = trial.suggest_float("gamma", 0, 5)
+    # subsample = trial.suggest_float("subsample", 0.5, 1.0)
     learning_rate = trial.suggest_categorical("learning_rate", [0.1, 0.3, 0.5, 0.7, 0.9])
     n_estimators = trial.suggest_categorical("max_iter", [50, 100, 150, 200, 300, 400])
     reg_lambda = trial.suggest_categorical("reg_lambda", [0.01, 0.1, 0.5, 1.0, 1.5, 2.0])
-    max_depth = trial.suggest_categorical("max_depth", [2, 4, 6, 8, 10, 12])
+    max_depth = trial.suggest_categorical("max_depth", [12, 14, 16, 18, 20, 24, 28, 32, 36])
 
     # rf = HistGradientBoostingClassifier(random_state=RANDOM_STATE, class_weight="balanced", learning_rate=learning_rate,
     #                                     max_iter=max_iter, early_stopping=False, max_leaf_nodes=None,
@@ -99,9 +123,13 @@ def objective(trial):
                        verbosity=2, tree_method="hist", scale_pos_weight=scale_pos, reg_lambda=reg_lambda,
                        max_depth=max_depth, n_jobs=3)
 
+    # f2_scorer = make_scorer(custom_loss_func, beta=2)
     f2_scorer = make_scorer(fbeta_score, beta=2)
-    kf = KFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
-    score = cross_val_score(rf, df[features], df[DIRECTION], n_jobs=5, scoring=f2_scorer, cv=kf)
+
+    groups = df.index.get_level_values(0).tolist()
+    gkf = GroupKFold(n_splits=5)
+    # this is the fastest and easiest way to get a continous index without destroying the pd.MultiIndex
+    score = cross_val_score(rf, df[features], df[DIRECTION], n_jobs=5, scoring=f2_scorer, cv=5)  # groups=groups,
     f2_score = score.mean()
     return f2_score
 
@@ -159,8 +187,14 @@ if __name__ == "__main__":
     ]
 
     RANDOM_STATE = 42
-    DIRECTION = "NS"
+    DIRECTION = "EW"
     NUM_CSV_SETS = -1
+    from pathlib import Path
+
+    # fixing joblib windows bug
+    base_dir_joblib_temp_folder = Path("C:/Users/nikla/Desktop/test_db/~joblib")
+    base_dir_joblib_temp_folder.mkdir(exist_ok=True, parents=True)
+    os.environ["JOBLIB_TEMP_FOLDER"] = str(base_dir_joblib_temp_folder)
 
     # Beginning
     df, features = load_stuff()
@@ -170,13 +204,12 @@ if __name__ == "__main__":
     num_neg = all_samples - num_pos
     scale_pos = num_neg / num_pos
 
-    study_name = "hSearch_HistGrad_NS"
+    study_name = "hSearch_XGBoost_EW_more_depth"
     db_file_path = "C:/Users/nikla/Desktop/test_db/mystorage_GDB.db"
-    # storage = optuna.storages.RDBStorage(url=db_file_path, engine_kwargs={"connect_args": {"timeout": 100}})
-    sampler = optuna.samplers.CmaEsSampler()
+    # sampler = optuna.samplers.CmaEsSampler(seed=RANDOM_STATE)
     study = create_study(load_if_exists=True, study_name=study_name, direction="maximize",
-                         storage=f'sqlite:///{db_file_path}')
-    study.optimize(objective, n_trials=100)
+                         storage=f'sqlite:///{db_file_path}') # , sampler=sampler
+    study.optimize(objective, n_trials=25)
     # dump(study, "study.pkl")
     # Print the optimal hyperparameters
     print('Number of finished trials:', len(study.trials))
