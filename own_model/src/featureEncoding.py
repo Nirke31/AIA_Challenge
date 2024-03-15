@@ -17,8 +17,9 @@ from own_model.src.myModel import Autoencoder
 
 def get_encoded_features(df: pd.DataFrame) -> torch.Tensor:
     model: Autoencoder = Autoencoder.load_from_checkpoint("../trained_model/autoencoder.ckpt")
+    device = model.device
     data = torch.from_numpy(df.to_numpy(dtype=np.float32))
-    out = model.encode_features(data)
+    out = model.encode_features(data.to(device)).cpu()
     return out
 
 
@@ -99,7 +100,7 @@ RANDOM_STATE = 42
 SHUFFLE = True
 TRAIN_TEST_RATIO = 0.8
 BATCH_SIZE = 512 * 4
-EPOCHS = 30
+EPOCHS = 300
 DIRECTION = "NS"
 NUM_WORKERS = 8
 NUM_CSV_SETS = -1
@@ -143,7 +144,7 @@ if __name__ == "__main__":
                          persistent_workers=True, pin_memory=True)
 
     SRC_SIZE = len(FEATURES)
-    autoencoder = Autoencoder(SRC_SIZE, 512, 15, act_fn=nn.Tanh)
+    autoencoder = Autoencoder(SRC_SIZE, 512, 20, act_fn=nn.Tanh)
     early_stop_callback = EarlyStopping(monitor="val_loss", mode="min", patience=5)
     checkpoint_callback = ModelCheckpoint(monitor="val_loss",
                                           mode="min",
