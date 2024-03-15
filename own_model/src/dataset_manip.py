@@ -43,14 +43,6 @@ class SubmissionWindowDataset(IterableDataset):
         # create all window sequences
         self._prepare_source(self.data_in.shape[-1])
 
-        # create extra feature, showing which window is starting at index 0
-        zero_timeIndices = self.data_in.loc[self.data_in.loc[:, coloum_name].astype(dtype="bool"), "TimeIndex"]
-        zero_timeIndex_feature = (zero_timeIndices == 0).to_numpy().astype('float32')
-
-        # bring into correct shape to add to src
-        expand_window_and_feature_size = np.expand_dims(zero_timeIndex_feature, axis=(1, 2))
-        correct_window_size = np.repeat(expand_window_and_feature_size, window_size, axis=1)
-        self.src = np.append(self.src, correct_window_size, axis=-1)
 
     def _prepare_source(self, feature_size) -> None:
 
@@ -457,6 +449,9 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
     for i, data_file in enumerate(data_path):
         if i == amount:
             break
+        # these are broken
+        if int(data_file.stem) in [30, 113, 1012, 1383, 1385, 1386, 1471, 1473, 1474]:
+            continue
 
         data_df = pd.read_csv(data_file, dtype=datatypes)
         data_df['ObjectID'] = int(data_file.stem)  # csv is named after its objectID/other way round
@@ -506,11 +501,11 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         indices = merged_df[merged_df["NS"] == 1].index
         seq_len = len(data_df)
         for idx in indices[1:]:
-            puffer = 2
+            puffer = 1
             start = idx - puffer if idx - puffer >= 0 else 0
             end = idx + puffer if idx + puffer < seq_len else seq_len
             # debug assert to see if window is smaller
-            assert end - start == 4  # 4 not 5 because pandas indexing
+            assert end - start == 2  # 4 not 5 because pandas indexing
             merged_df.loc[start:end, "NS"] = 1
 
         # Fill 'unknown' values in 'EW' and 'NS' columns that come before the first valid observation
@@ -596,7 +591,6 @@ def load_first_sample(data_location: Path, label_location: Path, amount: int = -
     return out_df, EW_labels
 
 
-# TODO: TEST IF SPLIT CORRECT
 def split_train_test(data: pd.DataFrame, train_test_ration: float = 0.8, random_state: int = 42) \
         -> Tuple[pd.DataFrame, pd.DataFrame]:
     # get unique ObjectIDs
