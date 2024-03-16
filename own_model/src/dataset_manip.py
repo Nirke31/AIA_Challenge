@@ -501,11 +501,11 @@ def load_data(data_location: Path, label_location: Path, amount: int = -1) -> pd
         indices = merged_df[merged_df["NS"] == 1].index
         seq_len = len(data_df)
         for idx in indices[1:]:
-            puffer = 1
+            puffer = 2
             start = idx - puffer if idx - puffer >= 0 else 0
             end = idx + puffer if idx + puffer < seq_len else seq_len
             # debug assert to see if window is smaller
-            assert end - start == 2  # 4 not 5 because pandas indexing
+            assert end - start == 4  # 4 not 5 because pandas indexing
             merged_df.loc[start:end, "NS"] = 1
 
         # Fill 'unknown' values in 'EW' and 'NS' columns that come before the first valid observation
