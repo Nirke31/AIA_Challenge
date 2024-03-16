@@ -2,7 +2,7 @@ import math
 import warnings
 from pathlib import Path
 from timeit import default_timer as timer
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -22,7 +22,6 @@ from torch.utils.data import DataLoader
 from xgboost import XGBClassifier
 
 from scipy.signal import find_peaks_cwt, find_peaks, peak_prominences, savgol_filter
-
 
 from own_model.src.dataset_manip import load_data, state_change_eval, MyDataset
 from own_model.src.myModel import LitChangePointClassifier
@@ -44,20 +43,65 @@ def get_peaks(x: pd.DataFrame):
     return x
 
 
-def apply_dynamic_weighting(x: pd.DataFrame):
+def create_triangle_kernel(period: int) -> np.array:
+    length = 2 * period
+    kernel = np.zeros(length)
+
+    # The midpoint of the kernel, adding 1 to handle zero-based indexing
+    midpoint = period
+
+    # Increasing linear sequence up to the midpoint
+    for i in range(midpoint):
+        kernel[i] = (i + 1) / midpoint
+
+    # Decreasing linear sequence after the midpoint
+    for i in range(midpoint, length):
+        kernel[i] = (length - i) / midpoint
+
+    return kernel
+
+
+def dynamic_weighting(x: pd.DataFrame):
     index = np.arange(x.shape[0])
     peak_index: np.array = index[x["peak"] == 1]
 
     # if we have 0 or just one peak we cannot calculate a period
-    if peak_index.size > 1:
-        # Calculate distance between consecutive peaks
-        distance = np.diff(peak_index)
-        # Determine expected period, may be a bit broke if we only have a few distances
-        period = int(np.median(distance))
+    if peak_index.size <= 1:
+        return x
 
-        x["peak_exp"] = x["peak"][::-1].rolling(window=period).max().bfill()[::-1]
-        x["peak_exp"] = x["peak_exp"].ewm(span=period).sum()
+    # Calculate distance between consecutive peaks
+    distance = np.diff(peak_index)
+    # Determine expected period, may be a bit broke if we only have a few distances
+    period = int(np.median(distance))
+
+    # if period is to large it would break our conv, and it's not really a period anyways
+    if period * 2 >= x.shape[0]:
+        return x
+
+    triangle_kernel = create_triangle_kernel(period)
+    peak_exp = np.convolve(x["peak"].to_numpy(), triangle_kernel, mode="same")
+    x["peak_exp"] = peak_exp
+
+    # x["peak_exp"] = x["peak"][::-1].rolling(window=period).max().bfill()[::-1]
+    # x["peak_exp"] = x["peak_exp"].ewm(span=period).sum()
+
     return x
+
+
+def add_engineered_peaks(df: pd.DataFrame, features_in: List[str]) -> Tuple[pd.DataFrame, List[str]]:
+    # already allocating features space
+    features = features_in.copy()
+    df["peak"] = 0.0
+    df["peak_exp"] = 0.0
+    df["smoothed"] = 0.0
+
+    # get peaks
+    df = df.groupby(level=0, group_keys=False).apply(get_peaks)
+    # weight peaks
+    df = df.groupby(level=0, group_keys=False).apply(dynamic_weighting)
+
+    features.append("peak_exp")
+    return df, features
 
 
 def add_lag_features(df: pd.DataFrame, feature_cols: List[str], lag_steps: int):
@@ -74,6 +118,19 @@ def add_lag_features(df: pd.DataFrame, feature_cols: List[str], lag_steps: int):
     # df_out = df_out.groupby(level=0, group_keys=False).apply(lambda x: x.ffill())
     df_out.fillna(0, inplace=True)
     return df_out, features_out
+
+
+def print_params():
+    print("PARAMS:")
+    print(f"NUM CSVs: {NUM_CSV_SETS}")
+    print(f"DIRECTION: {DIRECTION}")
+    if DIRECTION == "EW":
+        print(f"BASE_FEATURES: {BASE_FEATURES_EW}")
+        print(f"ENGINEERED FEATURES: {ENGINEERED_FEATURES_EW}")
+    else:
+        print(f"BASE_FEATURES: {BASE_FEATURES_NS}")
+        print(f"ENGINEERED FEATURES: {ENGINEERED_FEATURES_NS}")
+    print(f"FEATURES: {features}")
 
 
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/train")
@@ -134,20 +191,6 @@ RANDOM_STATE = 42
 DIRECTION = "NS"
 NUM_CSV_SETS = -1
 
-
-def print_params():
-    print("PARAMS:")
-    print(f"NUM CSVs: {NUM_CSV_SETS}")
-    print(f"DIRECTION: {DIRECTION}")
-    if DIRECTION == "EW":
-        print(f"BASE_FEATURES: {BASE_FEATURES_EW}")
-        print(f"ENGINEERED FEATURES: {ENGINEERED_FEATURES_EW}")
-    else:
-        print(f"BASE_FEATURES: {BASE_FEATURES_NS}")
-        print(f"ENGINEERED FEATURES: {ENGINEERED_FEATURES_NS}")
-    print(f"FEATURES: {features}")
-
-
 if __name__ == "__main__":
     # df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=NUM_CSV_SETS)
     # df.to_pickle("../../dataset/df.pkl")
@@ -195,16 +238,8 @@ if __name__ == "__main__":
             df[new_feature_name] = df.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
             features.append(new_feature_name)
 
-    # already allocating features space
-    df["peak"] = 0.0
-    df["peak_exp"] = 0.0
-    df["smoothed"] = 0.0
-
-    # get peaks
-    df = df.groupby(level=0, group_keys=False).apply(get_peaks)
-    # weight peaks
-    df = df.groupby(level=0, group_keys=False).apply(apply_dynamic_weighting)
-    features.append("peak_exp")
+    # add engineered inclination feature
+    df, features = add_engineered_peaks(df, features)
 
     # add lags
     df, features = add_lag_features(df, features, 8)
@@ -229,7 +264,6 @@ if __name__ == "__main__":
     # df.bfill(inplace=True)
     # df.ffill(inplace=True)
 
-
     # MANIPULATION DONE. TIME FOR TRAINING
     test_data = df.loc[test_ids].copy()
     train_data = df.loc[train_ids].copy()
@@ -238,11 +272,11 @@ if __name__ == "__main__":
     print_params()
     print("Fitting...")
     start_time = timer()
-    # rf = load("../trained_model/state_classifier.joblib")
-    rf.fit(train_data[features], train_data[DIRECTION])
+    rf = load("../trained_model/state_classifier.joblib")
+    # rf.fit(train_data[features], train_data[DIRECTION])
     print(f"Took: {timer() - start_time:.3f} seconds")
     # Write classifier to disk
-    dump(rf, "../trained_model/state_classifier.joblib", compress=3)
+    # dump(rf, "../trained_model/state_classifier.joblib", compress=3)
 
     # calibrated_clf = CalibratedClassifierCV(estimator=rf, method='isotonic')
     # calibrated_clf.fit(train_data[features], train_data[DIRECTION])
@@ -255,8 +289,8 @@ if __name__ == "__main__":
     # Step 3: Calculate precision, recall for various thresholds
     precision, recall, thresholds = precision_recall_curve(test_data[DIRECTION], predict_proba)
     test = PrecisionRecallDisplay(precision, recall)
-    test.plot()
-    plt.show()
+    # test.plot()
+    # plt.show()
 
     # # Calculate F2 scores for each threshold
     # beta = 3
@@ -275,9 +309,9 @@ if __name__ == "__main__":
     # test_data["PREDICTED"] = (predict_proba >= best_threshold).astype('int')
     # POST PROCESSING
     print("Postprocessing")
-    test_data["PREDICTED_sum"] = test_data["PREDICTED"].rolling(5, center=True).sum()
+    test_data["PREDICTED_sum"] = test_data["PREDICTED"].rolling(4, center=True).sum()
     test_data["PREDICTED_CLEAN"] = 0
-    test_data.loc[test_data["PREDICTED_sum"] >= 5, "PREDICTED_CLEAN"] = 1
+    test_data.loc[test_data["PREDICTED_sum"] >= 4, "PREDICTED_CLEAN"] = 1
 
     # removing two changepoints that are directly next to each other.
     diff = test_data["PREDICTED_CLEAN"].shift(1, fill_value=0) & test_data["PREDICTED_CLEAN"]
