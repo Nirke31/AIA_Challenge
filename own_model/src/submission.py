@@ -93,19 +93,45 @@ def get_peaks(x: pd.DataFrame):
     return x
 
 
+def create_triangle_kernel(period: int) -> np.array:
+    length = 2 * period
+    kernel = np.zeros(length)
+
+    # The midpoint of the kernel, adding 1 to handle zero-based indexing
+    midpoint = period
+
+    # Increasing linear sequence up to the midpoint
+    for i in range(midpoint):
+        kernel[i] = (i + 1) / midpoint
+
+    # Decreasing linear sequence after the midpoint
+    for i in range(midpoint, length):
+        kernel[i] = (length - i) / midpoint
+
+    return kernel
+
+
 def dynamic_weighting(x: pd.DataFrame):
     index = np.arange(x.shape[0])
     peak_index: np.array = index[x["peak"] == 1]
 
     # if we have 0 or just one peak we cannot calculate a period
-    if peak_index.size > 1:
-        # Calculate distance between consecutive peaks
-        distance = np.diff(peak_index)
-        # Determine expected period, may be a bit broke if we only have a few distances
-        period = int(np.median(distance))
+    if peak_index.size <= 1:
+        return x
 
-        x["peak_exp"] = x["peak"][::-1].rolling(window=period).max().bfill()[::-1]
-        x["peak_exp"] = x["peak_exp"].ewm(span=period).sum()
+    # Calculate distance between consecutive peaks
+    distance = np.diff(peak_index)
+    # Determine expected period, may be a bit broke if we only have a few distances
+    period = int(np.median(distance))
+
+    # if period is to large it would break our conv, and it's not really a period anyways
+    if period * 2 >= x.shape[0]:
+        return x
+
+    triangle_kernel = create_triangle_kernel(period)
+    peak_exp = np.convolve(x["peak"].to_numpy(), triangle_kernel, mode="same")
+    x["peak_exp"] = peak_exp
+
     return x
 
 
@@ -250,12 +276,12 @@ def classifier_preprocessing(df: pd.DataFrame, features_in: List[str]) -> Tuple[
 
 def changepoint_postprocessing(df: pd.DataFrame) -> pd.DataFrame:
     # post processing
-    df["PREDICTED_SUM_EW"] = df["PREDICTED_EW"].rolling(5, center=True).sum()
-    df["PREDICTED_SUM_NS"] = df["PREDICTED_NS"].rolling(3, center=True).sum()
+    df["PREDICTED_SUM_EW"] = df["PREDICTED_EW"].rolling(4, center=True).sum()
+    df["PREDICTED_SUM_NS"] = df["PREDICTED_NS"].rolling(4, center=True).sum()
     df["PREDICTED_CLEAN_EW"] = 0
     df["PREDICTED_CLEAN_NS"] = 0
-    df.loc[df["PREDICTED_SUM_EW"] >= 5, "PREDICTED_CLEAN_EW"] = 1
-    df.loc[df["PREDICTED_SUM_NS"] >= 3, "PREDICTED_CLEAN_NS"] = 1
+    df.loc[df["PREDICTED_SUM_EW"] >= 4, "PREDICTED_CLEAN_EW"] = 1
+    df.loc[df["PREDICTED_SUM_NS"] >= 4, "PREDICTED_CLEAN_NS"] = 1
 
     # removing two changepoints that are directly next to each other.
     diff = df["PREDICTED_CLEAN_EW"].shift(1, fill_value=0) & df["PREDICTED_CLEAN_EW"]
