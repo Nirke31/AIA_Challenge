@@ -380,9 +380,9 @@ def main():
     # rf_ew = rf_ew.set_params(**update_rf_params)
     # rf_ns = rf_ns.set_params(**update_rf_params)
     classifier_ew: LitClassifier = LitClassifier.load_from_checkpoint(
-        TRAINED_MODEL_DIR + "classification_epoch=60_val_MulticlassFBetaScore=0.97_EW_51_3c_2l.ckpt")
+        TRAINED_MODEL_DIR + "classification_0.97_EW.ckpt")
     classifier_ns: LitClassifier = LitClassifier.load_from_checkpoint(
-        TRAINED_MODEL_DIR + "classification_epoch=37_val_MulticlassFBetaScore=0.99_NS_101_3c_2l.ckpt")
+        TRAINED_MODEL_DIR + "classification_0.99_NS.ckpt")
     classifier_first_ew: LitClassifier = LitClassifier.load_from_checkpoint(
         TRAINED_MODEL_DIR + "classification_0.96_EW_2100_first.ckpt")
     classifier_first_ns: LitClassifier = LitClassifier.load_from_checkpoint(
@@ -413,8 +413,8 @@ def main():
 
     ds_ew = SubmissionWindowDataset(df, classifier_features, "PREDICTED_CLEAN_EW", window_size=51)
     ds_ns = SubmissionWindowDataset(df, classifier_features, "PREDICTED_CLEAN_NS", window_size=101)
-    ds_first_ew = SubmissionWindowDataset(df, classifier_features, "PREDICTED_FIRST_EW", window_size=1501)
-    ds_first_ns = SubmissionWindowDataset(df, classifier_features, "PREDICTED_FIRST_NS", window_size=2001)
+    ds_first_ew = SubmissionWindowDataset(df, classifier_features, "PREDICTED_FIRST_EW", window_size=2101)
+    ds_first_ns = SubmissionWindowDataset(df, classifier_features, "PREDICTED_FIRST_NS", window_size=2101)
     dataloader_ew = DataLoader(ds_ew, batch_size=20, num_workers=1)
     dataloader_ns = DataLoader(ds_ns, batch_size=20, num_workers=1)
     dataloader_first_ew = DataLoader(ds_first_ew, batch_size=20, num_workers=1)

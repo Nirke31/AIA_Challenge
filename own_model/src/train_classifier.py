@@ -93,7 +93,7 @@ TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase
 TGT_SIZE = 5  # based on the dataset dict
 TRAIN_TEST_RATIO = 0.90
 BATCH_SIZE = 20
-WINDOW_SIZE = 2101
+WINDOW_SIZE = 101
 EPOCHS = 400
 DIRECTION = "NS"
 NUM_WORKERS = 2
@@ -110,7 +110,7 @@ if __name__ == "__main__":
     data: pd.DataFrame = pd.read_pickle("../../dataset/data.pkl")
     labels: pd.DataFrame = pd.read_pickle("../../dataset/labels.pkl")
     # Train only first sample or without first sample
-    labels = labels[labels['TimeIndex'] == 0]
+    labels = labels[labels['TimeIndex'] != 0]
 
     # unwrap
     data[DEG_FEATURES] = np.unwrap(np.deg2rad(data[DEG_FEATURES]))
