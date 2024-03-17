@@ -233,16 +233,18 @@ class LitClassifier(L.LightningModule):
         self.save_hyperparameters()
         self.learning_rate = learning_rate
 
+        # self.net = DumbNet(feature_size, sequence_len, num_classes)
+
         # # we add one in _prepare_source
         # feature_size += 1
 
         self.conv1 = nn.Conv1d(in_channels=feature_size, out_channels=16, kernel_size=13, stride=1, padding=6)
-        self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=7, stride=1, padding=3)
-        self.conv3 = nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=9, stride=1, padding=4)
+        self.conv3 = nn.Conv1d(in_channels=32, out_channels=64, kernel_size=5, stride=1, padding=2)
         self.relu = nn.ReLU()
         self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
-        self.fc = nn.Linear(64 * (sequence_len // 8), 256)  # Adjust size based on pooling and conv layers
-        self.fc1 = nn.Linear(256, num_classes)  # Adjust size based on pooling and conv layers
+        self.fc = nn.Linear(64 * (sequence_len // 8), 1024)  # Adjust size based on pooling and conv layers
+        self.fc1 = nn.Linear(1024, num_classes)  # Adjust size based on pooling and conv layers
 
         # maybe use average = 'macro'
         # self.test_accuracy = Accuracy(task="multiclass", num_classes=num_classes)
@@ -272,6 +274,7 @@ class LitClassifier(L.LightningModule):
 
     def forward(self, src: Tensor, *args: Any, **kwargs: Any) -> Tensor:
         # Reshape input to (batch_size, feature_size, sequence_len)
+
         src = src.permute(0, 2, 1)
 
         src = self.conv1(src)

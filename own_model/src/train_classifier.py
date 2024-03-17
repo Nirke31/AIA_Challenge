@@ -91,13 +91,12 @@ TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_
 TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/train_labels.csv")
 
 TGT_SIZE = 5  # based on the dataset dict
-TRAIN_TEST_RATIO = 0.8
-TRAIN_VAL_RATION = 0.8
+TRAIN_TEST_RATIO = 0.90
 BATCH_SIZE = 20
-WINDOW_SIZE = 51
+WINDOW_SIZE = 2101
 EPOCHS = 400
-DIRECTION = "EW"
-NUM_WORKERS = 8
+DIRECTION = "NS"
+NUM_WORKERS = 2
 NUM_CSV_SETS = -1
 FEATURES = FEATURES_EW if DIRECTION == "EW" else FEATURES_NS
 SRC_SIZE = len(FEATURES)
@@ -111,7 +110,7 @@ if __name__ == "__main__":
     data: pd.DataFrame = pd.read_pickle("../../dataset/data.pkl")
     labels: pd.DataFrame = pd.read_pickle("../../dataset/labels.pkl")
     # Train only first sample or without first sample
-    labels = labels[labels['TimeIndex'] != 0]
+    labels = labels[labels['TimeIndex'] == 0]
 
     # unwrap
     data[DEG_FEATURES] = np.unwrap(np.deg2rad(data[DEG_FEATURES]))

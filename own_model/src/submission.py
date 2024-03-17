@@ -384,9 +384,9 @@ def main():
     classifier_ns: LitClassifier = LitClassifier.load_from_checkpoint(
         TRAINED_MODEL_DIR + "classification_epoch=37_val_MulticlassFBetaScore=0.99_NS_101_3c_2l.ckpt")
     classifier_first_ew: LitClassifier = LitClassifier.load_from_checkpoint(
-        TRAINED_MODEL_DIR + "classification_epoch=67_val_MulticlassFBetaScore=0.95_EW_1501_3c_2l_first.ckpt")
+        TRAINED_MODEL_DIR + "classification_0.96_EW_2100_first.ckpt")
     classifier_first_ns: LitClassifier = LitClassifier.load_from_checkpoint(
-        TRAINED_MODEL_DIR + "classification_epoch=64_val_MulticlassFBetaScore=0.96_NS_2001_3c_2l_first.ckpt")
+        TRAINED_MODEL_DIR + "classification_0.98_NS_2100_first.ckpt")
     # Load scaler for LitClassifier
     scaler: StandardScaler = load(TRAINED_MODEL_DIR + "scaler.joblib")
 
