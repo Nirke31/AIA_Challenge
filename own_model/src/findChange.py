@@ -272,11 +272,11 @@ if __name__ == "__main__":
     print_params()
     print("Fitting...")
     start_time = timer()
-    rf = load("../trained_model/state_classifier.joblib")
-    # rf.fit(train_data[features], train_data[DIRECTION])
+    # rf = load("../trained_model/state_classifier.joblib")
+    rf.fit(train_data[features], train_data[DIRECTION])
     print(f"Took: {timer() - start_time:.3f} seconds")
     # Write classifier to disk
-    # dump(rf, "../trained_model/state_classifier.joblib", compress=3)
+    dump(rf, "../trained_model/state_classifier.joblib", compress=3)
 
     # calibrated_clf = CalibratedClassifierCV(estimator=rf, method='isotonic')
     # calibrated_clf.fit(train_data[features], train_data[DIRECTION])
