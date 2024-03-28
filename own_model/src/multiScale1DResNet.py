@@ -184,20 +184,32 @@ class DumbNet(nn.Module):
 
         self.flatten = nn.Flatten(1)
 
-        self.input = nn.Linear(input_channels * seq_len, input_channels * 64)
+        self.input = nn.Linear(input_channels * seq_len, 4096)
 
-        self.hidden1 = nn.Linear(input_channels * 64, input_channels * 32)
-        self.hidden2 = nn.Linear(input_channels * 32, input_channels * 16)
-        self.hidden3 = nn.Linear(input_channels * 16, input_channels * 8)
-        self.hidden4 = nn.Linear(input_channels * 8, input_channels * 4)
+        self.hidden02 = nn.Linear(4096, 1024)
+        self.hidden01 = nn.Linear(1024, 256)
+        self.hidden0 = nn.Linear(256, 128)
+        self.hidden1 = nn.Linear(128, 64)
+        self.hidden2 = nn.Linear(64, 32)
+        self.hidden3 = nn.Linear(32, 16)
+        #self.hidden4 = nn.Linear(16, 16)
 
-        self.out = nn.Linear(input_channels * 4, num_classes)
+        self.out = nn.Linear(16, num_classes)
 
         self.relu = nn.ReLU()
 
     def forward(self, x):
         x = self.flatten(x)
         x = self.input(x)
+        x = self.relu(x)
+
+        x = self.hidden02(x)
+        x = self.relu(x)
+
+        x = self.hidden01(x)
+        x = self.relu(x)
+
+        x = self.hidden0(x)
         x = self.relu(x)
 
         x = self.hidden1(x)
@@ -209,8 +221,8 @@ class DumbNet(nn.Module):
         x = self.hidden3(x)
         x = self.relu(x)
 
-        x = self.hidden4(x)
-        x = self.relu(x)
+        # x = self.hidden4(x)
+        # x = self.relu(x)
 
         x = self.out(x)
         return x
