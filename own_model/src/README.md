@@ -28,18 +28,18 @@ model checkpoint instead of the model that is actually stored at the end of the 
 on the train set. 
 
 All other files are quickly listed below in (more or less) descending importance:
-4. [**dataset_manip.py**](./dataset_manip.py): All initial train dataset manipulation are done in this file. Additionally, contains the 
+* [**dataset_manip.py**](./dataset_manip.py): All initial train dataset manipulation are done in this file. Additionally, contains the 
 specific datasets for training all CNNs.
-5. [**myModel.py**](./myModel.py): Contains CNN model used in training. Also contains older models, currently not used such as an 
+* [**myModel.py**](./myModel.py): Contains CNN model used in training. Also contains older models, currently not used such as an 
 Autoencoder, Transformer and simpler changepoint classifier.
-6. [**optuna_hsearch.py**](./optuna_hsearch.py): The [optuna library](https://optuna.org/) was used for finding the best hyperparameters for 
+* [**optuna_hsearch.py**](./optuna_hsearch.py): The [optuna library](https://optuna.org/) was used for finding the best hyperparameters for 
 the changepoint classifier. 
-7. [**test.py**](./test.py): File where many small tests were carried out.
-9. [**multiScale1DResNet.py**](./multiScale1DResNet.py): Initially, a 1D ResNet was tested but model was deemed to complex. Now houses the "DumbNet",
+* [**test.py**](./test.py): File where many small tests were carried out.
+* [**multiScale1DResNet.py**](./multiScale1DResNet.py): Initially, a 1D ResNet was tested but model was deemed to complex. Now houses the "DumbNet",
 which is just a simple fully connected neural network.
-8. [**featureEncoding.py**](./featureEncoding.py): [DEPRECATED] - Trained the Autoencoder with this file. Not successful but with further work
-could prove beneficial. 
-10. [**first_sample.py**](./first_sample.py): [DEPRECATED] - Tried to classify the behaviour of first samples via RandomForest. Not successful.
-11. [**findChangeViaConv.py**](./findChangeViaConv.py): [DEPRECATED] - Tried to find changepoints via CNN. Not successful. 
-12. [**transformer.py**](./transformer.py): [DEPRECATED] - Initial try of the challenge. Transformer was deemed to complex and not suited for 
+* [**featureEncoding.py**](./featureEncoding.py): [DEPRECATED] - Trained the Autoencoder with this file. Not successful but with further work
+could prove beneficial.
+* [**first_sample.py**](./first_sample.py): [DEPRECATED] - Tried to classify the behaviour of first samples via RandomForest. Not successful.
+* [**findChangeViaConv.py**](./findChangeViaConv.py): [DEPRECATED] - Tried to find changepoints via CNN. Not successful. 
+* [**transformer.py**](./transformer.py): [DEPRECATED] - Initial try of the challenge. Transformer was deemed to complex and not suited for 
 dataset. Not successful. 
