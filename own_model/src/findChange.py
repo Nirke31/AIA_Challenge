@@ -188,13 +188,13 @@ DEG_FEATURES = [
 WINDOW_SIZE = 6
 TRAIN_TEST_RATIO = 0.8
 RANDOM_STATE = 42
-DIRECTION = "NS"
+DIRECTION = "EW"
 NUM_CSV_SETS = -1
 
 if __name__ == "__main__":
-    # df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=NUM_CSV_SETS)
+    df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=NUM_CSV_SETS)
     # df.to_pickle("../../dataset/df.pkl")
-    df: pd.DataFrame = pd.read_pickle("../../dataset/df.pkl")
+    # df: pd.DataFrame = pd.read_pickle("../../dataset/df.pkl")
 
     # manually remove the change point at time index 0. We know that there is a time change, so we do not have to try
     # and predict it
