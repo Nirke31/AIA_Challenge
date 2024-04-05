@@ -1,3 +1,7 @@
+# NOTE!!!
+I only kept this directory as reference for my own submission. Additionally, I am using the [**evaluation.py**](./evaluation.py)
+file in my scripts. No changes have been made (to my knowledge) to this directory. 
+
 
 # Baseline submissions
 Participants will be submitting their trained algorithm with their  code/workflow to generation predictions into the competition platform, in the programming language they prefer. Here we provide Docker containers and example submissions for common Python and Matlab, but participants are allowed to submit with other custom containers too. 
