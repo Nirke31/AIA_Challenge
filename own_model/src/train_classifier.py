@@ -96,6 +96,7 @@ BATCH_SIZE = 20
 WINDOW_SIZE = 101
 EPOCHS = 400
 DIRECTION = "NS"
+FIRST = True
 NUM_WORKERS = 2
 NUM_CSV_SETS = -1
 FEATURES = FEATURES_EW if DIRECTION == "EW" else FEATURES_NS
@@ -104,13 +105,17 @@ SRC_SIZE = len(FEATURES)
 if __name__ == "__main__":
     L.seed_everything(RANDOM_STATE, workers=True)
     # FOR FITTING WINDOW MODEL
-    # data, labels = load_data_window_ready(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, NUM_CSV_SETS)
+    data, labels = load_data_window_ready(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, NUM_CSV_SETS)
     # data.to_pickle("../../dataset/data.pkl")
     # labels.to_pickle("../../dataset/labels.pkl")
-    data: pd.DataFrame = pd.read_pickle("../../dataset/data.pkl")
-    labels: pd.DataFrame = pd.read_pickle("../../dataset/labels.pkl")
+    # data: pd.DataFrame = pd.read_pickle("../../dataset/data.pkl")
+    # labels: pd.DataFrame = pd.read_pickle("../../dataset/labels.pkl")
+
     # Train only first sample or without first sample
-    labels = labels[labels['TimeIndex'] != 0]
+    if FIRST:
+        labels = labels[labels['TimeIndex'] == 0]
+    else:
+        labels = labels[labels['TimeIndex'] != 0]
 
     # unwrap
     data[DEG_FEATURES] = np.unwrap(np.deg2rad(data[DEG_FEATURES]))
