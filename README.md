@@ -1,8 +1,7 @@
 
 <div align="center">
 
-# AI SSA Challenge Submission
-## MiseryModel
+# AI SSA Challenge Submission - MiseryModel 
 
 --------------------------------------------
 </div>
