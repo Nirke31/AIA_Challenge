@@ -133,8 +133,8 @@ def print_params():
     print(f"FEATURES: {features}")
 
 
-TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/train")
-TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/train_labels.csv")
+TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/train_own")
+TRAIN_LABEL_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/train_label_own.csv")
 
 BASE_FEATURES_EW = [
     # "Eccentricity",
@@ -241,6 +241,15 @@ if __name__ == "__main__":
     # add engineered inclination feature
     df, features = add_engineered_peaks(df, features)
 
+    # group = df.groupby(level=0, group_keys=False)
+    # for id, group in group:
+    #     if id not in [1544]:
+    #         continue
+    #     test = group[["Inclination (deg)", "NS", "Inclination (deg)_std", "smoothed", "peak", "peak_exp"]]
+    #     test.plot(subplots=True, title=id)
+    #     plt.show()
+    # exit()
+
     # add lags
     df, features = add_lag_features(df, features, 8)
     #
@@ -273,7 +282,7 @@ if __name__ == "__main__":
     print("Fitting...")
     start_time = timer()
     # rf = load("../trained_model/state_classifier.joblib")
-    rf.fit(train_data[features], train_data[DIRECTION])
+    rf.fit(df[features], df[DIRECTION])
     print(f"Took: {timer() - start_time:.3f} seconds")
     # Write classifier to disk
     dump(rf, "../trained_model/state_classifier.joblib", compress=3)

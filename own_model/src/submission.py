@@ -16,11 +16,11 @@ from myModel import LitClassifier
 from dataset_manip import SubmissionWindowDataset
 
 # INPUT/OUTPUT PATHS WITHIN THE DOCKER CONTAINER
-DEBUG = False
+DEBUG = True
 
 if DEBUG:
     TRAINED_MODEL_DIR = "../trained_model/"
-    TEST_DATA_DIR = "../../dataset/phase_1_v3/train/"
+    TEST_DATA_DIR = "../../dataset/phase_2/test_own/"
     TEST_PREDS_FP = "../../submission/submission.csv"
 else:
     TRAINED_MODEL_DIR = "/trained_model/"
@@ -373,20 +373,20 @@ def generate_output(pred_ew: Tensor, pred_ns: Tensor, int_to_str_translation: di
 def main():
     start_time = time.perf_counter()
     # Load models for prediction
-    rf_ew = load(TRAINED_MODEL_DIR + "state_classifier_EW_xgboost.joblib")
-    rf_ns = load(TRAINED_MODEL_DIR + "state_classifier_NS_xgboost.joblib")
+    rf_ew = load(TRAINED_MODEL_DIR + "state_classifier_EW_full.joblib")
+    rf_ns = load(TRAINED_MODEL_DIR + "state_classifier_NS_full.joblib")
     # rf models were trained with more than 4 cpus
     # update_rf_params = {"n_jobs": 4}
     # rf_ew = rf_ew.set_params(**update_rf_params)
     # rf_ns = rf_ns.set_params(**update_rf_params)
     classifier_ew: LitClassifier = LitClassifier.load_from_checkpoint(
-        TRAINED_MODEL_DIR + "classification_0.97_EW.ckpt")
+        TRAINED_MODEL_DIR + "full_0.97_EW_51.ckpt")
     classifier_ns: LitClassifier = LitClassifier.load_from_checkpoint(
-        TRAINED_MODEL_DIR + "classification_0.99_NS.ckpt")
+        TRAINED_MODEL_DIR + "full_0.97_NS_101.ckpt")
     classifier_first_ew: LitClassifier = LitClassifier.load_from_checkpoint(
-        TRAINED_MODEL_DIR + "classification_0.96_EW_2100_first.ckpt")
+        TRAINED_MODEL_DIR + "full_0.92_EW_2101.ckpt")
     classifier_first_ns: LitClassifier = LitClassifier.load_from_checkpoint(
-        TRAINED_MODEL_DIR + "classification_0.98_NS_2100_first.ckpt")
+        TRAINED_MODEL_DIR + "full_0.89_NS_2101.ckpt")
     # Load scaler for LitClassifier
     scaler: StandardScaler = load(TRAINED_MODEL_DIR + "scaler.joblib")
 
@@ -468,7 +468,7 @@ if __name__ == "__main__":
     if DEBUG:
         from baseline_submissions.evaluation import NodeDetectionEvaluator
 
-        ground_truth = pd.read_csv("../../dataset/phase_1_v3/train_labels.csv")
+        ground_truth = pd.read_csv("../../dataset/phase_2/test_label_own.csv")
         own = pd.read_csv("../../submission/submission.csv")
         test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
         precision, recall, f2, rmse = test.score(debug=True)
@@ -476,4 +476,4 @@ if __name__ == "__main__":
         print(f'Recall: {recall:.2f}')
         print(f'F2: {f2:.2f}')
         print(f'RMSE: {rmse:.2f}')
-        test.plot(1151)
+        # test.plot(1151)
