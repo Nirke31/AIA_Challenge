@@ -9,6 +9,7 @@ from timeit import default_timer as timer
 from joblib import dump, load
 
 from matplotlib import pyplot as plt
+from sklearn.model_selection import train_test_split
 from torch import Tensor
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -589,28 +590,28 @@ train_label_str = "//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_1_v3/
 # df.hist(bins=15)
 # plt.show()
 
-ground_truth = pd.read_csv("../../dataset/phase_1_v3/train_labels.csv")
-own = pd.read_csv("../../submission/submission.csv")
-test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
-oids = own["ObjectID"].unique().tolist()
-wrong_ids = []
-wrong_FP = []
-wrong_FN = []
-for id in oids:
-    tp, fp, fn, gt_object, p_object = test.evaluate(id)
-    if fp > 0:
-        wrong_FP.append(id)
-    if fn > 0:
-        wrong_FN.append(id)
-    if fp > 0 or fn > 0:
-        wrong_ids.append(id)
-
-print(f"Num wrong time series: {len(wrong_ids)}")
-print(f"Num time series with FN: {len(wrong_FN)}")
-print(f"Num time series with FP: {len(wrong_FP)}")
-print(wrong_ids)
-for id in wrong_ids:
-    test.plot(id)
+# ground_truth = pd.read_csv("../../dataset/phase_1_v3/train_labels.csv")
+# own = pd.read_csv("../../submission/submission.csv")
+# test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
+# oids = own["ObjectID"].unique().tolist()
+# wrong_ids = []
+# wrong_FP = []
+# wrong_FN = []
+# for id in oids:
+#     tp, fp, fn, gt_object, p_object = test.evaluate(id)
+#     if fp > 0:
+#         wrong_FP.append(id)
+#     if fn > 0:
+#         wrong_FN.append(id)
+#     if fp > 0 or fn > 0:
+#         wrong_ids.append(id)
+#
+# print(f"Num wrong time series: {len(wrong_ids)}")
+# print(f"Num time series with FN: {len(wrong_FN)}")
+# print(f"Num time series with FP: {len(wrong_FP)}")
+# print(wrong_ids)
+# for id in wrong_ids:
+#     test.plot(id)
 
 # precision, recall, f2, rmse = test.score(debug=True)
 # print(f'Precision: {precision:.2f}')
@@ -638,3 +639,44 @@ for id in wrong_ids:
 # print(f"Best threshold: {best_threshold}")
 # print(f"Best F2 score: {best_f2_score}")
 # test_data["PREDICTED"] = (predict_proba >= best_threshold).astype('int')
+
+lbl_1 = pd.read_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/train_label.csv")
+lbl_2 = pd.read_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/test_label.csv")
+lbl = pd.concat([lbl_1, lbl_2], axis=0)
+lbl.index = lbl["ObjectID"]
+
+object_ids = lbl['ObjectID'].unique()
+train_ids, test_ids = train_test_split(object_ids, test_size=0.2, random_state=52, shuffle=True)
+
+lbl_1 = lbl.loc[train_ids]
+lbl_2 = lbl.loc[test_ids]
+
+lbl_1.to_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/train_label_own.csv", index=False)
+lbl_2.to_csv("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/test_label_own.csv", index=False)
+
+loaded_dfs = []
+for i, data_file in enumerate(Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/training/").glob('*.csv')):
+    data_df = pd.read_csv(data_file)
+    data_df['ObjectID'] = int(data_file.stem)  # csv is named after its objectID/other way round
+    loaded_dfs.append(data_df)
+
+for i, data_file in enumerate(Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/test/").glob('*.csv')):
+    data_df = pd.read_csv(data_file)
+    data_df['ObjectID'] = int(data_file.stem)  # csv is named after its objectID/other way round
+    loaded_dfs.append(data_df)
+
+df = pd.concat(loaded_dfs, axis=0)
+
+df.index = df["ObjectID"]
+df.drop("ObjectID", axis=1, inplace=True)
+
+df_train = df.loc[train_ids]
+df_test = df.loc[test_ids]
+
+for object_id, group in df_train.groupby(level=0, group_keys=False):
+    group.to_csv(f"//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/train_own/{int(object_id):04}.csv", index=False)
+
+for object_id, group in df_test.groupby(level=0, group_keys=False):
+    group.to_csv(f"//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/test_own/{int(object_id):04}.csv", index=False)
+
+
