@@ -1,6 +1,6 @@
 # NOTE!!!
 I only kept this directory as reference for my own submission. Additionally, I am using the [**evaluation.py**](./evaluation.py)
-file in my scripts. No changes have been made (to my knowledge) to this directory. 
+file in my scripts. The only change (to my knowledge) was to the evaluation.py file. 
 
 
 # Baseline submissions
