@@ -18,7 +18,7 @@ from own_model.src.dataset_manip import load_data_window_ready, GetWindowDataset
 from own_model.src.myModel import LitClassifier
 
 
-def main(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd.DataFrame, test_labels: pd.DataFrame,
+def main_CNN(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd.DataFrame, test_labels: pd.DataFrame,
          direction: str, first: bool):
     L.seed_everything(RANDOM_STATE, workers=True)
     FEATURES = FEATURES_EW if direction == "EW" else FEATURES_NS
@@ -127,7 +127,7 @@ def main(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd.Dat
     trainer.fit(model=model, train_dataloaders=dataloader_train, val_dataloaders=dataloader_val)
 
     scores = trainer.test(dataloaders=dataloader_test, ckpt_path="best")
-    print(scores)
+
     return scores[0]['test_MulticlassFBetaScore']
 
 
@@ -211,7 +211,7 @@ TRAIN_TEST_RATIO = 0.8
 TRAIN_VAL_RATIO = 0.8
 BATCH_SIZE = 20
 WINDOW_SIZE = 2101
-EPOCHS = 1
+EPOCHS = 400
 DIRECTION = "NS"
 FIRST = True
 OWN_TEST_SET = False
@@ -237,4 +237,4 @@ if __name__ == "__main__":
         labels_test = labels_train.loc[labels_train["ObjectID"].isin(test_ids), :]
         labels_train = labels
 
-    main(data_train, labels_train, data_test, labels_test, DIRECTION, FIRST)
+    main_CNN(data_train, labels_train, data_test, labels_test, DIRECTION, FIRST)
