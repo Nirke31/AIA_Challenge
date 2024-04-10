@@ -39,6 +39,7 @@ class NodeDetectionEvaluator:
                 p_idx = matching_participant_events.index[0]
                 p_row = matching_participant_events.iloc[0]
                 distance = p_row['TimeIndex'] - gt_row['TimeIndex']
+                # added "EGAL" as wildcard to be able to check evaluation changepoint models
                 if p_row['Node'] == gt_row['Node'] and p_row['Type'] == gt_row['Type'] or p_row['Type'] == "EGAL":
                     tp += 1
                     gt_object.loc[gt_idx, 'classification'] = 'TP'
