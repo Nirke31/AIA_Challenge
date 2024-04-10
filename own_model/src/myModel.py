@@ -16,7 +16,7 @@ from timeit import default_timer as timer
 import lightning as L
 from torchmetrics.classification import Accuracy, FBetaScore, Recall, Precision, BinaryPrecisionRecallCurve
 from torchmetrics import MetricCollection
-from multiScale1DResNet import MSResNet, SimpleResNet, DumbNet
+from own_model.src.multiScale1DResNet import MSResNet, SimpleResNet, DumbNet
 
 
 def create_src_mask(src: Tensor, num_heads: int, device: torch.device) -> Tensor:
