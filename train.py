@@ -4,11 +4,12 @@ from pathlib import Path
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from own_model.src.dataset_manip import load_data
-from own_model.src.findChange import main
+from own_model.src.dataset_manip import load_data, load_data_window_ready
+from own_model.src.findChange import main_CP
+from own_model.src.train_classifier import main_CNN
 
 # Can be set for debug. Load only partial data set or -1 for all
-NUM_CSV = 100
+NUM_CSV = -1
 
 
 def load_train_and_test(train_data_path: Path, train_label_path: Path, test_data_path: Path, test_label_path: Path):
@@ -35,6 +36,34 @@ def load_train_and_split_test(train_data_path: Path, train_label_path: Path, spl
     return train_set, test_set, test_labels
 
 
+def load_window_train_and_test(train_data_path: Path, train_label_path: Path, test_data_path: Path,
+                               test_label_path: Path):
+    train_data, train_labels = load_data_window_ready(train_data_path, train_label_path, NUM_CSV)
+    test_data, test_labels = load_data_window_ready(test_data_path, test_label_path, NUM_CSV)
+
+    return train_data, train_labels, test_data, test_labels
+
+
+def load_window_train_and_split_test(train_data_path: Path, train_label_path: Path, split_ration: float):
+    train_data, train_labels = load_data_window_ready(train_data_path, train_label_path, NUM_CSV)
+    object_ids = train_data['ObjectID'].unique()
+    train_ids, test_ids = train_test_split(object_ids, test_size=1 - split_ration,
+                                           random_state=42, shuffle=True)
+
+    # DATA
+    data = train_data.loc[train_data["ObjectID"].isin(train_ids), :].copy()
+    test_data = train_data.loc[train_data["ObjectID"].isin(test_ids), :].copy()
+    # had to temporary store it to not overwrite
+    train_data = data
+
+    # LABELS
+    labels = train_labels.loc[train_labels["ObjectID"].isin(train_ids), :]
+    test_labels = train_labels.loc[train_labels["ObjectID"].isin(test_ids), :]
+    train_labels = labels
+
+    return train_data, train_labels, test_data, test_labels
+
+
 def run_train(train_data_path: Path, train_label_path: Path, test_data_path: Path = None, test_label_path: Path = None,
               split: float = None):
     # load dataset(s)
@@ -44,11 +73,53 @@ def run_train(train_data_path: Path, train_label_path: Path, test_data_path: Pat
         df_train, df_test, df_test_labels = load_train_and_test(train_data_path, train_label_path, test_data_path,
                                                                 test_label_path)
 
-    print("TRAIN CHANGEPOINT PREDICTION - DIRECTION EW")
-    main(df_train, df_test, df_test_labels, "EW")
+    print("TRAIN CHANGEPOINT PREDICTION - DIRECTION EW ---------------------------------------------------------------")
+    f2_cp_ew = main_CP(df_train, df_test, df_test_labels, "EW")
 
-    print("TRAIN CHANGEPOINT PREDICTION - DIRECTION NS")
-    main(df_train, df_test, df_test_labels, "NS")
+    print("TRAIN CHANGEPOINT PREDICTION - DIRECTION NS ---------------------------------------------------------------")
+    f2_cp_ns = main_CP(df_train, df_test, df_test_labels, "NS")
+
+    # delete dataframes that are not needed anymore
+    del df_train
+    del df_test
+
+    if split:
+        train_data, train_labels, test_data, test_labels = load_window_train_and_split_test(train_data_path,
+                                                                                            train_label_path, split)
+    else:
+        train_data, train_labels, test_data, test_labels = load_window_train_and_test(train_data_path,
+                                                                                      train_label_path, split)
+
+    print("TRAIN BEHAVIOR CLASSIFICATION - CHANGEPOINT CLASSIFICATION - EW -------------------------------------------")
+    f2_cc_ew = main_CNN(train_data, train_labels, test_data, test_labels, "EW", False)
+
+    print("TRAIN BEHAVIOR CLASSIFICATION - CHANGEPOINT CLASSIFICATION - NS -------------------------------------------")
+    f2_cc_ns = main_CNN(train_data, train_labels, test_data, test_labels, "NS", False)
+
+    print("TRAIN BEHAVIOR CLASSIFICATION - FIRST CLASSIFICATION - EW -------------------------------------------------")
+    f2_fc_ew = main_CNN(train_data, train_labels, test_data, test_labels, "EW", True)
+
+    print("TRAIN BEHAVIOR CLASSIFICATION - FIRST CLASSIFICATION - NS -------------------------------------------------")
+    f2_fc_ns = main_CNN(train_data, train_labels, test_data, test_labels, "NS", True)
+
+    # RESULTS
+
+    print("\n\n\n")
+    print("***********************************************************************************************************")
+    print("***** TRAINING DONE ***************************************************************************************")
+    print("***********************************************************************************************************")
+    print("\n")
+    print("F2 SCORES OF EVERY MODEL:")
+    print("\tCHANGEPOINT PREDICTION:")
+    print(f"\t\tEW DIRECTION: {f2_cp_ew}")
+    print(f"\t\tNS DIRECTION: {f2_cp_ns}")
+    print("\tBEHAVIOR PREDICTION:")
+    print(f"\t\tCHANGEPOINT CLASSIFICATION")
+    print(f"\t\tEW DIRECTION: {f2_cc_ew}")
+    print(f"\t\tNS DIRECTION: {f2_cc_ns}")
+    print(f"\t\tFIRST SAMPLE CLASSIFICATION")
+    print(f"\t\tEW DIRECTION: {f2_fc_ew}")
+    print(f"\t\tNS DIRECTION: {f2_fc_ns}")
 
 
 # trains all models and stores them in own_model/trained_model
