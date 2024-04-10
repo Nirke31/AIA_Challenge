@@ -134,7 +134,7 @@ def print_params(features, direction):
     print(f"FEATURES: {features}")
 
 
-def main(df_train: pd.DataFrame, df_test: pd.DataFrame, df_test_labels: pd.DataFrame, direction: str):
+def main_CP(df_train: pd.DataFrame, df_test: pd.DataFrame, df_test_labels: pd.DataFrame, direction: str):
     # manually remove the change point at time index 0. We know that there is a time change, so we do not have to try
     # and predict it
     df_train.loc[df_train["TimeIndex"] == 0, "EW"] = 0
@@ -329,4 +329,4 @@ if __name__ == "__main__":
     test_labels: pd.DataFrame = pd.read_csv(TRAIN_LABEL_PATH)
     test_labels = test_labels.loc[test_labels["ObjectID"].isin(test_ids), :]
 
-    main(train_set, test_set, test_labels, DIRECTION)
+    main_CP(train_set, test_set, test_labels, DIRECTION)
