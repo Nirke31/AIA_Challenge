@@ -18,11 +18,26 @@ from own_model.src.dataset_manip import load_data_window_ready, GetWindowDataset
 from own_model.src.myModel import LitClassifier
 
 
+def get_window_size(direction: str, first: bool) -> int:
+    if first:
+        if direction == "EW":
+            return WINDOW_SIZE[2]
+        else:  # NS
+            return WINDOW_SIZE[3]
+    else:
+        if direction == "EW":
+            return WINDOW_SIZE[0]
+        else:  # NS
+            return WINDOW_SIZE[1]
+
+
 def main_CNN(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd.DataFrame, test_labels: pd.DataFrame,
-         direction: str, first: bool):
+             direction: str, first: bool):
     L.seed_everything(RANDOM_STATE, workers=True)
+
     FEATURES = FEATURES_EW if direction == "EW" else FEATURES_NS
-    SRC_SIZE = len(FEATURES)
+    # get window size.
+    window_size = get_window_size(direction, first)
 
     # Train only first sample or without first sample
     if first:
@@ -77,9 +92,9 @@ def main_CNN(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd
     val_labels.reset_index(drop=True, inplace=True)
     test_labels.reset_index(drop=True, inplace=True)
 
-    ds_train = GetWindowDataset(train_data, train_labels, WINDOW_SIZE)
-    ds_val = GetWindowDataset(train_data, val_labels, WINDOW_SIZE)
-    ds_test = GetWindowDataset(test_data, test_labels, WINDOW_SIZE)
+    ds_train = GetWindowDataset(train_data, train_labels, window_size)
+    ds_val = GetWindowDataset(train_data, val_labels, window_size)
+    ds_test = GetWindowDataset(test_data, test_labels, window_size)
     # check train vs val ratio
     print(f"Train label counts: {ds_train.tgt.loc[:, 'Type'].value_counts()}")
     print(f"Val label counts {ds_val.tgt.loc[:, 'Type'].value_counts()}")
@@ -114,7 +129,7 @@ def main_CNN(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd
     # get actual model
     # have to (re)set size because features were added
     SRC_SIZE = len(FEATURES)
-    model = LitClassifier(WINDOW_SIZE, SRC_SIZE, 1e-4, TGT_SIZE)
+    model = LitClassifier(window_size, SRC_SIZE, 1e-4, TGT_SIZE)
     early_stop_callback = EarlyStopping(monitor="val_MulticlassFBetaScore", mode="max", patience=40)
     checkpoint_callback = ModelCheckpoint(monitor="val_MulticlassFBetaScore",
                                           mode="max",
@@ -210,7 +225,7 @@ TGT_SIZE = 5  # based on the dataset dict
 TRAIN_TEST_RATIO = 0.8
 TRAIN_VAL_RATIO = 0.8
 BATCH_SIZE = 20
-WINDOW_SIZE = 2101
+WINDOW_SIZE = [51, 101, 2101, 2101]  # EW, NS, EW first, NS first
 EPOCHS = 400
 DIRECTION = "NS"
 FIRST = True
