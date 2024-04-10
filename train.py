@@ -1,4 +1,5 @@
 import argparse
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -66,6 +67,9 @@ def load_window_train_and_split_test(train_data_path: Path, train_label_path: Pa
 
 def run_train(train_data_path: Path, train_label_path: Path, test_data_path: Path = None, test_label_path: Path = None,
               split: float = None):
+    # start timer
+    start_time = time.perf_counter()
+
     # load dataset(s)
     if split:
         df_train, df_test, df_test_labels = load_train_and_split_test(train_data_path, train_label_path, split)
@@ -87,8 +91,8 @@ def run_train(train_data_path: Path, train_label_path: Path, test_data_path: Pat
         train_data, train_labels, test_data, test_labels = load_window_train_and_split_test(train_data_path,
                                                                                             train_label_path, split)
     else:
-        train_data, train_labels, test_data, test_labels = load_window_train_and_test(train_data_path,
-                                                                                      train_label_path, split)
+        train_data, train_labels, test_data, test_labels = load_window_train_and_test(train_data_path, train_label_path,
+                                                                                      test_data_path, test_label_path)
 
     print("TRAIN BEHAVIOR CLASSIFICATION - CHANGEPOINT CLASSIFICATION - EW -------------------------------------------")
     f2_cc_ew = main_CNN(train_data, train_labels, test_data, test_labels, "EW", False)
@@ -102,13 +106,17 @@ def run_train(train_data_path: Path, train_label_path: Path, test_data_path: Pat
     print("TRAIN BEHAVIOR CLASSIFICATION - FIRST CLASSIFICATION - NS -------------------------------------------------")
     f2_fc_ns = main_CNN(train_data, train_labels, test_data, test_labels, "NS", True)
 
+    time_in_seconds = int(time.perf_counter() - start_time)
+    m, s = divmod(time_in_seconds, 60)
+    h, m = divmod(m, 60)
+
     # RESULTS
 
     print("\n\n\n")
     print("***********************************************************************************************************")
     print("***** TRAINING DONE ***************************************************************************************")
     print("***********************************************************************************************************")
-    print("\n")
+    print(f"TRAINING TOOK: {h:d}h:{m:02d}m:{s:02d}s")
     print("F2 SCORES OF EVERY MODEL:")
     print("\tCHANGEPOINT PREDICTION:")
     print(f"\t\tEW DIRECTION: {f2_cp_ew}")
