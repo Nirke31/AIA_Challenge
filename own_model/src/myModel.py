@@ -314,7 +314,7 @@ class LitClassifier(L.LightningModule):
         # log stuff
         self.log('val_loss', loss)
         metrics = self.val_metrics(logits, tgt)
-        self.log_dict(metrics)
+        self.log_dict(metrics, prog_bar=False)
 
         # tracker for plots after training finished
         self.val_tracker.update(logits, tgt)
@@ -360,7 +360,7 @@ class LitClassifier(L.LightningModule):
 
     def on_validation_epoch_end(self) -> None:
         output = self.val_metrics.compute()
-        self.log_dict(output)
+        self.log_dict(output, prog_bar=False)
         # reset for early stop
         self.val_metrics.reset()
 
@@ -371,7 +371,7 @@ class LitClassifier(L.LightningModule):
         self.train_tracker.plot(val=all_train_results)
         self.val_tracker.plot(val=all_val_results)
 
-        plt.show()
+        # plt.show()
         self.val_metrics.reset()
 
 

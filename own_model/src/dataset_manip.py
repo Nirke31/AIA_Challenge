@@ -412,7 +412,7 @@ def load_data_window_ready(data_location: Path, label_location: Path, amount: in
 
     out_df_index = pd.MultiIndex.from_frame(out_df[['ObjectID', 'TimeIndex']], names=['ObjectID', 'TimeIndex'])
     out_df.index = out_df_index
-    out_df.drop(labels=['ObjectID', 'TimeIndex'], axis=1, inplace=True)
+    # out_df.drop(labels=['ObjectID', 'TimeIndex'], axis=1, inplace=True)
     out_df.sort_index(inplace=True)
 
     # drop end of study targets as we do not have to predict those
