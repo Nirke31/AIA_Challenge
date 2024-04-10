@@ -1,7 +1,0 @@
-ObjectID,TimeIndex,Direction,Node,Type
-1,0,EW,SS,CK
-1,65,EW,ID,NK
-1,0,NS,SS,NK
-1,110,NS,IK,EK
-2,30,EW,SS,CK
-2,50,NS,IK,EK
