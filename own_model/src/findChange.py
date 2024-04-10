@@ -254,7 +254,7 @@ def main(df_train: pd.DataFrame, df_test: pd.DataFrame, df_test_labels: pd.DataF
     print(f"Num time series with FP: {len(wrong_FP)}")
     print(wrong_ids)
 
-    return
+    return f2
 
 
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/train_own")
@@ -326,5 +326,7 @@ if __name__ == "__main__":
 
     train_set = df.loc[train_ids].copy()
     test_set = df.loc[test_ids].copy()
+    test_labels: pd.DataFrame = pd.read_csv(TRAIN_LABEL_PATH)
+    test_labels = test_labels.loc[test_labels["ObjectID"].isin(test_ids), :]
 
-    main(train_set, test_set, TRAIN_LABEL_PATH, DIRECTION)
+    main(train_set, test_set, test_labels, DIRECTION)
