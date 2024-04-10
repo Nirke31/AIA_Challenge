@@ -120,17 +120,136 @@ def add_lag_features(df: pd.DataFrame, feature_cols: List[str], lag_steps: int):
     return df_out, features_out
 
 
-def print_params():
+def print_params(features, direction):
     print("PARAMS:")
     print(f"NUM CSVs: {NUM_CSV_SETS}")
-    print(f"DIRECTION: {DIRECTION}")
-    if DIRECTION == "EW":
+    print(f"DIRECTION: {direction}")
+    if direction == "EW":
         print(f"BASE_FEATURES: {BASE_FEATURES_EW}")
         print(f"ENGINEERED FEATURES: {ENGINEERED_FEATURES_EW}")
     else:
         print(f"BASE_FEATURES: {BASE_FEATURES_NS}")
         print(f"ENGINEERED FEATURES: {ENGINEERED_FEATURES_NS}")
     print(f"FEATURES: {features}")
+
+
+def main(df_train: pd.DataFrame, df_test: pd.DataFrame, test_label_path: Path, direction: str):
+    # manually remove the change point at time index 0. We know that there is a time change, so we do not have to try
+    # and predict it
+    df_train.loc[df_train["TimeIndex"] == 0, "EW"] = 0
+    df_train.loc[df_train["TimeIndex"] == 0, "NS"] = 0
+    df_test.loc[df_test["TimeIndex"] == 0, "EW"] = 0
+    df_test.loc[df_test["TimeIndex"] == 0, "NS"] = 0
+
+    num_pos = df_train[direction].sum()
+    all_samples = df_train[direction].shape[0]
+    num_neg = all_samples - num_pos
+    scale_pos = num_neg / num_pos
+    rf = XGBClassifier(random_state=RANDOM_STATE, n_estimators=300, max_leaves=0, learning_rate=0.3, max_bin=256 * 8,
+                       verbosity=2, tree_method="hist", scale_pos_weight=scale_pos, reg_lambda=0.5, max_depth=12)
+
+    # features selected based on rf feature importance.
+    features = BASE_FEATURES_EW if direction == "EW" else BASE_FEATURES_NS
+    # unwrap
+    df_train[DEG_FEATURES] = np.unwrap(np.deg2rad(df_train[DEG_FEATURES]))
+    df_test[DEG_FEATURES] = np.unwrap(np.deg2rad(df_test[DEG_FEATURES]))
+
+    # FEATURE ENGINEERING
+    feature_dict = ENGINEERED_FEATURES_EW if direction == "EW" else ENGINEERED_FEATURES_NS
+    for (math_type, lambda_fnc), feature_list in feature_dict.items():
+        for feature in feature_list:
+            new_feature_name = feature + "_" + math_type
+            # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
+            # and then added back to the DF, backfill to fill NANs resulting from window
+            df_train[new_feature_name] = df_train.groupby(level=0, group_keys=False)[[feature]].apply(
+                lambda_fnc).bfill()
+            df_test[new_feature_name] = df_test.groupby(level=0, group_keys=False)[[feature]].apply(
+                lambda_fnc).bfill()
+            features.append(new_feature_name)
+
+    # engineered_peaks and lag_features function both add feature name to list. to not add twice we have to make own
+    # list for train and test
+    features_train = features.copy()
+    features_test = features.copy()
+
+    # add engineered inclination feature
+    df_train, features_train = add_engineered_peaks(df_train, features_train)
+    df_test, features_test = add_engineered_peaks(df_test, features_test)
+
+    # add lags
+    df_train, features_train = add_lag_features(df_train, features_train, 8)
+    df_test, features_test = add_lag_features(df_test, features_test, 8)
+
+    # RF model
+    print_params(features_train, direction)
+    print("Fitting...")
+    start_time = timer()
+    # rf = load("../trained_model/state_classifier.joblib")
+    rf.fit(df_train[features_train], df_train[direction])
+    print(f"Took: {timer() - start_time:.3f} seconds")
+    # Write classifier to disk
+    model_name = f"state_classifier_{direction}.joblib"
+    model_path = f"../trained_model/{model_name}"
+    dump(rf, model_path, compress=3)
+    print(f"Wrote model {model_name} to {model_path}")
+
+    print("Predicting...")
+    df_test["PREDICTED"] = rf.predict(df_test[features_test])
+
+    # POST PROCESSING
+    print("Postprocessing")
+    df_test["PREDICTED_sum"] = df_test["PREDICTED"].rolling(4, center=True).sum()
+    df_test["PREDICTED_CLEAN"] = 0
+    df_test.loc[df_test["PREDICTED_sum"] >= 4, "PREDICTED_CLEAN"] = 1
+
+    # removing two changepoints that are directly next to each other.
+    diff = df_test["PREDICTED_CLEAN"].shift(1, fill_value=0) & df_test["PREDICTED_CLEAN"]
+    df_test["PREDICTED_CLEAN"] -= diff
+
+    # set start node manually
+    df_test.loc[df_test["TimeIndex"] == 0, "PREDICTED_CLEAN"] = 1
+
+    changepoints = df_test.loc[df_test["PREDICTED_CLEAN"].astype("bool"), ["ObjectID", "TimeIndex"]]
+    changepoints["Direction"] = direction
+    changepoints["Node"] = "EGAL"
+    changepoints["Type"] = "EGAL"
+
+    # EVALUATION
+    object_ids = changepoints["ObjectID"].unique()
+    labels = pd.read_csv(test_label_path)
+    labels = labels.loc[labels["ObjectID"].isin(object_ids), :]
+    lable_other_dir = labels[labels["Direction"] != direction]
+    # Currently not predicting NS therefore just add the correct ones
+    changepoints = pd.concat([changepoints, lable_other_dir])
+    changepoints = changepoints.reset_index(drop=True)
+    labels = labels.reset_index(drop=True)
+
+    eval = NodeDetectionEvaluator(labels, changepoints, tolerance=6)
+    precision, recall, f2, rmse = eval.score(debug=True)
+    print(f'Precision: {precision:.2f}')
+    print(f'Recall: {recall:.2f}')
+    print(f'F2: {f2:.2f}')
+    print(f'RMSE: {rmse:.2f}')
+
+    oids = changepoints["ObjectID"].unique().tolist()
+    wrong_ids = []
+    wrong_FP = []
+    wrong_FN = []
+    for id in oids:
+        tp, fp, fn, gt_object, p_object = eval.evaluate(id)
+        if fp > 0:
+            wrong_FP.append(id)
+        if fn > 0:
+            wrong_FN.append(id)
+        if fp > 0 or fn > 0:
+            wrong_ids.append(id)
+
+    print(f"Num wrong time series: {len(wrong_ids)}")
+    print(f"Num time series with FN: {len(wrong_FN)}")
+    print(f"Num time series with FP: {len(wrong_FP)}")
+    print(wrong_ids)
+
+    return
 
 
 TRAIN_DATA_PATH = Path("//wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/train_own")
@@ -193,261 +312,14 @@ NUM_CSV_SETS = -1
 
 if __name__ == "__main__":
     df: pd.DataFrame = load_data(TRAIN_DATA_PATH, TRAIN_LABEL_PATH, amount=NUM_CSV_SETS)
-    # df.to_pickle("../../dataset/df.pkl")
-    # df: pd.DataFrame = pd.read_pickle("../../dataset/df.pkl")
 
-    # manually remove the change point at time index 0. We know that there is a time change, so we do not have to try
-    # and predict it
-    df.loc[df["TimeIndex"] == 0, "EW"] = 0
-    df.loc[df["TimeIndex"] == 0, "NS"] = 0
-    # RF approach
-    print("Dataset loaded")
     object_ids = df['ObjectID'].unique()
     train_ids, test_ids = train_test_split(object_ids,
                                            test_size=1 - TRAIN_TEST_RATIO,
                                            random_state=RANDOM_STATE,
                                            shuffle=True)
 
-    # rf = RandomForestClassifier(n_estimators=200, random_state=RANDOM_STATE, n_jobs=15,
-    #                             class_weight="balanced_subsample", criterion="log_loss")
-    # rf = HistGradientBoostingClassifier(random_state=RANDOM_STATE, class_weight="balanced", learning_rate=0.597289,
-    #                                     max_iter=213, early_stopping=False, max_leaf_nodes=None,
-    #                                     min_samples_leaf=25, l2_regularization=0.1)
-    num_pos = df[DIRECTION].sum()
-    all_samples = df[DIRECTION].shape[0]
-    num_neg = all_samples - num_pos
-    scale_pos = num_neg / num_pos
+    train_set = df.loc[train_ids].copy()
+    test_set = df.loc[test_ids].copy()
 
-    # rf = XGBClassifier(random_state=RANDOM_STATE, n_estimators=300, max_leaves=0, learning_rate=0.3,
-    #                    verbosity=2, tree_method="hist", scale_pos_weight=scale_pos, reg_lambda=1.5, max_depth=11
-    rf = XGBClassifier(random_state=RANDOM_STATE, n_estimators=300, max_leaves=0, learning_rate=0.3, max_bin=256 * 8,
-                       verbosity=2, tree_method="hist", scale_pos_weight=scale_pos, reg_lambda=0.5, max_depth=12)
-
-    # features selected based on rf feature importance.
-    features = BASE_FEATURES_EW if DIRECTION == "EW" else BASE_FEATURES_NS
-    # unwrap
-    df[DEG_FEATURES] = np.unwrap(np.deg2rad(df[DEG_FEATURES]))
-
-    # FEATURE ENGINEERING
-    feature_dict = ENGINEERED_FEATURES_EW if DIRECTION == "EW" else ENGINEERED_FEATURES_NS
-    for (math_type, lambda_fnc), feature_list in feature_dict.items():
-        for feature in feature_list:
-            new_feature_name = feature + "_" + math_type
-            # groupby objectIDs, get a feature and then apply rolling window for each objectID, is returned as series
-            # and then added back to the DF, backfill to fill NANs resulting from window
-            df[new_feature_name] = df.groupby(level=0, group_keys=False)[[feature]].apply(lambda_fnc).bfill()
-            features.append(new_feature_name)
-
-    # add engineered inclination feature
-    df, features = add_engineered_peaks(df, features)
-
-    # group = df.groupby(level=0, group_keys=False)
-    # for id, group in group:
-    #     if id not in [1544]:
-    #         continue
-    #     test = group[["Inclination (deg)", "NS", "Inclination (deg)_std", "smoothed", "peak", "peak_exp"]]
-    #     test.plot(subplots=True, title=id)
-    #     plt.show()
-    # exit()
-
-    # add lags
-    df, features = add_lag_features(df, features, 8)
-    #
-    # # adding smoothing because of some FPs
-    # new_feature_name = "Inclination (deg)" + "_" + "std"
-    # df[new_feature_name] = df.groupby(level=0, group_keys=False)[["Inclination (deg)"]].apply(
-    #     lambda x: x.rolling(window=WINDOW_SIZE).std())
-    # df[new_feature_name + "smoothed_1"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
-    #     lambda x: x[::-1].ewm(span=100, adjust=True).sum()[::-1])
-    # df[new_feature_name + "smoothed_2"] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
-    #     lambda x: x.ewm(span=100, adjust=True).sum())
-    # df.bfill(inplace=True)
-    # df.ffill(inplace=True)
-    # df[new_feature_name + "_smoothed"] = (df[new_feature_name + "smoothed_1"] +
-    #                                       df[new_feature_name + "smoothed_2"]) / 2
-    # # test features
-    # test_features_name = "inc_std_sum"
-    # df[test_features_name] = df.groupby(level=0, group_keys=False)[[new_feature_name]].apply(
-    #     lambda x: x.rolling(window=170).max())
-    # features.append(test_features_name)
-    # df.bfill(inplace=True)
-    # df.ffill(inplace=True)
-
-    # MANIPULATION DONE. TIME FOR TRAINING
-    test_data = df.loc[test_ids].copy()
-    train_data = df.loc[train_ids].copy()
-
-    # RF model
-    print_params()
-    print("Fitting...")
-    start_time = timer()
-    # rf = load("../trained_model/state_classifier.joblib")
-    rf.fit(df[features], df[DIRECTION])
-    print(f"Took: {timer() - start_time:.3f} seconds")
-    # Write classifier to disk
-    dump(rf, "../trained_model/state_classifier.joblib", compress=3)
-
-    # calibrated_clf = CalibratedClassifierCV(estimator=rf, method='isotonic')
-    # calibrated_clf.fit(train_data[features], train_data[DIRECTION])
-
-    print("Predicting...")
-    # train_data["PREDICTED"] = rf.predict(train_data[features])
-    test_data["PREDICTED"] = rf.predict(test_data[features])
-    predict_proba: np.ndarray = rf.predict_proba(test_data[features])[:, 1]
-
-    # Step 3: Calculate precision, recall for various thresholds
-    precision, recall, thresholds = precision_recall_curve(test_data[DIRECTION], predict_proba)
-    test = PrecisionRecallDisplay(precision, recall)
-    # test.plot()
-    # plt.show()
-
-    # # Calculate F2 scores for each threshold
-    # beta = 3
-    # f2_scores = ((1 + beta*beta) * precision * recall) / (((beta*beta) * precision) + recall)
-    # # Avoid division by zero
-    # f2_scores = np.nan_to_num(f2_scores)
-    #
-    # # Step 4: Find the threshold that maximizes F2 score
-    # max_f2_index = np.argmax(f2_scores)
-    # # max_f2_index = 670603
-    # best_threshold = thresholds[max_f2_index]
-    # best_f2_score = f2_scores[max_f2_index]
-    #
-    # print(f"Best threshold: {best_threshold}")
-    # print(f"Best F2 score: {best_f2_score}")
-    # test_data["PREDICTED"] = (predict_proba >= best_threshold).astype('int')
-    # POST PROCESSING
-    print("Postprocessing")
-    test_data["PREDICTED_sum"] = test_data["PREDICTED"].rolling(4, center=True).sum()
-    test_data["PREDICTED_CLEAN"] = 0
-    test_data.loc[test_data["PREDICTED_sum"] >= 4, "PREDICTED_CLEAN"] = 1
-
-    # removing two changepoints that are directly next to each other.
-    diff = test_data["PREDICTED_CLEAN"].shift(1, fill_value=0) & test_data["PREDICTED_CLEAN"]
-    test_data["PREDICTED_CLEAN"] -= diff
-
-    # set start node manually
-    test_data.loc[test_data["TimeIndex"] == 0, "PREDICTED_CLEAN"] = 1
-
-    changepoints = test_data.loc[test_data["PREDICTED_CLEAN"].astype("bool"), ["ObjectID", "TimeIndex"]]
-    changepoints["Direction"] = DIRECTION
-    changepoints["Node"] = "EGAL"
-    changepoints["Type"] = "EGAL"
-
-    # EVALUATION
-    object_ids = changepoints["ObjectID"].unique()
-    labels = pd.read_csv(TRAIN_LABEL_PATH)
-    labels = labels.loc[labels["ObjectID"].isin(object_ids), :]
-    lable_other_dir = labels[labels["Direction"] != DIRECTION]
-    # Currently not predicting NS therefore just add the correct ones
-    changepoints = pd.concat([changepoints, lable_other_dir])
-    changepoints = changepoints.reset_index(drop=True)
-    labels = labels.reset_index(drop=True)
-
-    eval = NodeDetectionEvaluator(labels, changepoints, tolerance=6)
-    precision, recall, f2, rmse = eval.score(debug=True)
-    print(f'Precision: {precision:.2f}')
-    print(f'Recall: {recall:.2f}')
-    print(f'F2: {f2:.2f}')
-    print(f'RMSE: {rmse:.2f}')
-
-    oids = changepoints["ObjectID"].unique().tolist()
-    wrong_ids = []
-    wrong_FP = []
-    wrong_FN = []
-    for id in oids:
-        tp, fp, fn, gt_object, p_object = eval.evaluate(id)
-        if fp > 0:
-            wrong_FP.append(id)
-        if fn > 0:
-            wrong_FN.append(id)
-        if fp > 0 or fn > 0:
-            wrong_ids.append(id)
-
-    print(f"Num wrong time series: {len(wrong_ids)}")
-    print(f"Num time series with FN: {len(wrong_FN)}")
-    print(f"Num time series with FP: {len(wrong_FP)}")
-    print(wrong_ids)
-    features_plot = [
-        "Eccentricity",
-        "Eccentricity_std",
-        "Semimajor Axis (m)",
-        "Inclination (deg)",
-        "RAAN (deg)",
-        # "Argument of Periapsis (deg)",
-        # "True Anomaly (deg)",
-        # "Latitude (deg)",
-        # "Longitude (deg)",
-        "smoothed",
-        "peak",
-        "peak_exp",
-        "NS",
-        "PREDICTED",
-        "PREDICTED_sum",
-        "PREDICTED_CLEAN"]
-    for id in wrong_ids:
-        test_data.loc[test_data["ObjectID"] == id, features_plot].plot(subplots=True, title=id)
-        eval.plot(id)
-
-    # eval.plot(157)  # object_ids[0]
-
-    # print("TRAIN RESULTS:")
-    # total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(train_data["PREDICTED"].to_numpy()),
-    #                                                            torch.tensor(train_data[DIRECTION].to_numpy()))
-    # precision = total_tp / (total_tp + total_fp) \
-    #     if (total_tp + total_fp) != 0 else 0
-    # recall = total_tp / (total_tp + total_fn) \
-    #     if (total_tp + total_fn) != 0 else 0
-    # f2 = (5 * total_tp) / (5 * total_tp + 4 * total_fn + total_fp) \
-    #     if (5 * total_tp + 4 * total_fn + total_fp) != 0 else 0
-    #
-    # print(f"Total TPs: {total_tp}")
-    # print(f"Total FPs: {total_fp}")
-    # print(f"Total FNs: {total_fn}")
-    # print(f"Total TNs: {total_tn}")
-    # print(f'Precision: {precision:.2f}')
-    # print(f'Recall: {recall:.2f}')
-    # print(f'F2: {f2:.2f}')
-    #
-    # print("TEST RESULTS:")
-    # total_tp, total_fp, total_tn, total_fn = state_change_eval(torch.tensor(test_data["PREDICTED"].to_numpy()),
-    #                                                            torch.tensor(test_data[DIRECTION].to_numpy()))
-    # precision = total_tp / (total_tp + total_fp) \
-    #     if (total_tp + total_fp) != 0 else 0
-    # recall = total_tp / (total_tp + total_fn) \
-    #     if (total_tp + total_fn) != 0 else 0
-    # f2 = (5 * total_tp) / (5 * total_tp + 4 * total_fn + total_fp) \
-    #     if (5 * total_tp + 4 * total_fn + total_fp) != 0 else 0
-    # print(f"Total TPs: {total_tp}")
-    # print(f"Total FPs: {total_fp}")
-    # print(f"Total FNs: {total_fn}")
-    # print(f"Total TNs: {total_tn}")
-    # print(f'Precision: {precision:.2f}')
-    # print(f'Recall: {recall:.2f}')
-    # print(f'F2: {f2:.2f}')
-    #
-    # # feature importance with xgboost
-    # feature_importances = rf.feature_importances_
-    # xgb_importances = pd.Series(feature_importances, index=features)
-    # xgb_importances.plot.bar()
-    # plt.tight_layout()
-    # plt.show()
-
-    # # feature importance with permutation, more robust or smth like that
-    # start_time = timer()
-    # f2_scorer = make_scorer(fbeta_score, beta=2)
-    # result = permutation_importance(rf, test_data[features], test_data[DIRECTION].to_numpy(), n_repeats=5,
-    #                                 random_state=RANDOM_STATE, n_jobs=2, scoring=f2_scorer)
-    # elapsed_time = timer() - start_time
-    # print(f"Elapsed time to compute the importances: {elapsed_time:.3f} seconds")
-    # forest_importances = pd.Series(result.importances_mean, index=features)
-    # fig, ax = plt.subplots()
-    # forest_importances.plot.bar(yerr=result.importances_std, ax=ax)
-    # ax.set_title("Feature importances using permutation on full model")
-    # ax.set_ylabel("Mean accuracy decrease")
-    # fig.tight_layout()
-    # plt.show()
-    #
-    # PrecisionRecallDisplay.from_estimator(rf, test_data[features], test_data[DIRECTION], name="RF",
-    #                                       plot_chance_level=True)
-    # plt.show()
+    main(train_set, test_set, TRAIN_LABEL_PATH, DIRECTION)
