@@ -156,3 +156,8 @@ cython_debug/
 # End of https://www.toptal.com/developers/gitignore/api/python,jupyternotebooks
 
 predictions
+
+# own folders or files
+lightning_logs/
+dataset/test/
+hsearch_db/
