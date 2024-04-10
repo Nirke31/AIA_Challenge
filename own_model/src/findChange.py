@@ -26,7 +26,7 @@ from scipy.signal import find_peaks_cwt, find_peaks, peak_prominences, savgol_fi
 
 from own_model.src.dataset_manip import load_data, state_change_eval, MyDataset
 from own_model.src.myModel import LitChangePointClassifier
-from baseline_submissions.evaluation import NodeDetectionEvaluator
+from own_model.src.evaluation import NodeDetectionEvaluator
 
 
 def get_peaks(x: pd.DataFrame):

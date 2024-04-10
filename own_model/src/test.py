@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 
 from dataset_manip import load_data, split_train_test, pad_sequence_vec, SubmissionChangePointDataset
 from sklearn.preprocessing import StandardScaler
-from baseline_submissions.evaluation import NodeDetectionEvaluator
+from own_model.src.evaluation import NodeDetectionEvaluator
 
 import lightning as L
 

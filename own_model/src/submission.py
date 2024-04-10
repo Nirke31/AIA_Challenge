@@ -466,7 +466,7 @@ def main():
 if __name__ == "__main__":
     main()
     if DEBUG:
-        from baseline_submissions.evaluation import NodeDetectionEvaluator
+        from own_model.src.evaluation import NodeDetectionEvaluator
 
         ground_truth = pd.read_csv("../../dataset/phase_2/test_label_own.csv")
         own = pd.read_csv("../../submission/submission.csv")
