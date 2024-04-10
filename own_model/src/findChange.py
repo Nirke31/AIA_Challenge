@@ -1,4 +1,5 @@
 import math
+import os
 import warnings
 from pathlib import Path
 from timeit import default_timer as timer
@@ -133,7 +134,7 @@ def print_params(features, direction):
     print(f"FEATURES: {features}")
 
 
-def main(df_train: pd.DataFrame, df_test: pd.DataFrame, test_label_path: Path, direction: str):
+def main(df_train: pd.DataFrame, df_test: pd.DataFrame, df_test_labels: pd.DataFrame, direction: str):
     # manually remove the change point at time index 0. We know that there is a time change, so we do not have to try
     # and predict it
     df_train.loc[df_train["TimeIndex"] == 0, "EW"] = 0
@@ -187,11 +188,15 @@ def main(df_train: pd.DataFrame, df_test: pd.DataFrame, test_label_path: Path, d
     # rf = load("../trained_model/state_classifier.joblib")
     rf.fit(df_train[features_train], df_train[direction])
     print(f"Took: {timer() - start_time:.3f} seconds")
+
     # Write classifier to disk
     model_name = f"state_classifier_{direction}.joblib"
+    # Get the absolute directory path of the current file
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     model_path = f"../trained_model/{model_name}"
-    dump(rf, model_path, compress=3)
-    print(f"Wrote model {model_name} to {model_path}")
+    file_path = os.path.join(base_dir, model_path)
+    dump(rf, file_path, compress=3)
+    print(f"Wrote model {model_name} to {file_path}")
 
     print("Predicting...")
     df_test["PREDICTED"] = rf.predict(df_test[features_test])
@@ -216,7 +221,7 @@ def main(df_train: pd.DataFrame, df_test: pd.DataFrame, test_label_path: Path, d
 
     # EVALUATION
     object_ids = changepoints["ObjectID"].unique()
-    labels = pd.read_csv(test_label_path)
+    labels = df_test_labels
     labels = labels.loc[labels["ObjectID"].isin(object_ids), :]
     lable_other_dir = labels[labels["Direction"] != direction]
     # Currently not predicting NS therefore just add the correct ones
