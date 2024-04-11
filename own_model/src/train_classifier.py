@@ -99,6 +99,7 @@ def main_CNN(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd
     # check train vs val ratio
     print(f"Train label counts: {ds_train.tgt.loc[:, 'Type'].value_counts()}")
     print(f"Val label counts {ds_val.tgt.loc[:, 'Type'].value_counts()}")
+    print(f"Window size: {window_size}")
 
     # sampler
     num_samples = ds_train.tgt.shape[0]
