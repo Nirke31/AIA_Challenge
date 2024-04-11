@@ -35,7 +35,7 @@ def main_CNN(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd
              direction: str, first: bool):
     L.seed_everything(RANDOM_STATE, workers=True)
 
-    FEATURES = FEATURES_EW if direction == "EW" else FEATURES_NS
+    FEATURES = FEATURES_EW.copy() if direction == "EW" else FEATURES_NS.copy()
     # get window size.
     window_size = get_window_size(direction, first)
 
@@ -52,7 +52,7 @@ def main_CNN(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd
     test_data[DEG_FEATURES] = np.unwrap(np.deg2rad(test_data[DEG_FEATURES]))
 
     # FEATURE ENGINEERING
-    feature_dict = ENGINEERED_FEATURES_EW if direction == "EW" else ENGINEERED_FEATURES_NS
+    feature_dict = ENGINEERED_FEATURES_EW.copy() if direction == "EW" else ENGINEERED_FEATURES_NS.copy()
     for (math_type, lambda_fnc), feature_list in feature_dict.items():
         for feature in feature_list:
             new_feature_name = feature + "_" + math_type
