@@ -78,10 +78,14 @@ def run_train(train_data_path: Path, train_label_path: Path, test_data_path: Pat
                                                                 test_label_path)
 
     print("TRAIN CHANGEPOINT PREDICTION - DIRECTION EW ---------------------------------------------------------------")
+    start_cp_ew = time.perf_counter()
     f2_cp_ew = main_CP(df_train, df_test, df_test_labels, "EW")
+    elapse_cp_ew = int(time.perf_counter() - start_cp_ew)
 
     print("TRAIN CHANGEPOINT PREDICTION - DIRECTION NS ---------------------------------------------------------------")
+    start_cp_ns = time.perf_counter()
     f2_cp_ns = main_CP(df_train, df_test, df_test_labels, "NS")
+    elapse_cp_ns = int(time.perf_counter() - start_cp_ns)
 
     # delete dataframes that are not needed anymore
     del df_train
@@ -95,20 +99,29 @@ def run_train(train_data_path: Path, train_label_path: Path, test_data_path: Pat
                                                                                       test_data_path, test_label_path)
 
     print("TRAIN BEHAVIOR CLASSIFICATION - CHANGEPOINT CLASSIFICATION - EW -------------------------------------------")
+    start_cc_ew = time.perf_counter()
     f2_cc_ew = main_CNN(train_data, train_labels, test_data, test_labels, "EW", False)
+    elapse_cc_ew = int(time.perf_counter() - start_cc_ew)
 
     print("TRAIN BEHAVIOR CLASSIFICATION - CHANGEPOINT CLASSIFICATION - NS -------------------------------------------")
+    start_cc_ns = time.perf_counter()
     f2_cc_ns = main_CNN(train_data, train_labels, test_data, test_labels, "NS", False)
+    elapse_cc_ns = int(time.perf_counter() - start_cc_ns)
 
     print("TRAIN BEHAVIOR CLASSIFICATION - FIRST CLASSIFICATION - EW -------------------------------------------------")
+    start_fc_ew = time.perf_counter()
     f2_fc_ew = main_CNN(train_data, train_labels, test_data, test_labels, "EW", True)
+    elapse_fc_ew = int(time.perf_counter() - start_fc_ew)
 
     print("TRAIN BEHAVIOR CLASSIFICATION - FIRST CLASSIFICATION - NS -------------------------------------------------")
+    start_fc_ns = time.perf_counter()
     f2_fc_ns = main_CNN(train_data, train_labels, test_data, test_labels, "NS", True)
+    elapse_fc_ns = int(time.perf_counter() - start_fc_ns)
 
-    time_in_seconds = int(time.perf_counter() - start_time)
-    m, s = divmod(time_in_seconds, 60)
-    h, m = divmod(m, 60)
+    def get_h_m_s(time_in_seconds: int):
+        m, s = divmod(time_in_seconds, 60)
+        h, m = divmod(m, 60)
+        return h, m, s
 
     # RESULTS
 
@@ -116,18 +129,25 @@ def run_train(train_data_path: Path, train_label_path: Path, test_data_path: Pat
     print("***********************************************************************************************************")
     print("***** TRAINING DONE ***************************************************************************************")
     print("***********************************************************************************************************")
+    h, m, s = get_h_m_s(int(time.perf_counter() - start_time))
     print(f"TRAINING TOOK: {h:d}h:{m:02d}m:{s:02d}s")
     print("F2 SCORES OF EVERY MODEL:")
     print("\tCHANGEPOINT PREDICTION:")
-    print(f"\t\tEW DIRECTION: {f2_cp_ew}")
-    print(f"\t\tNS DIRECTION: {f2_cp_ns}")
+    h, m, s = get_h_m_s(elapse_cp_ew)
+    print(f"\t\tEW DIRECTION: {f2_cp_ew:.4f} - Time elapsed: {h:d}h:{m:02d}m:{s:02d}s")
+    h, m, s = get_h_m_s(elapse_cp_ns)
+    print(f"\t\tNS DIRECTION: {f2_cp_ns:.4f} - Time elapsed: {h:d}h:{m:02d}m:{s:02d}s")
     print("\tBEHAVIOR PREDICTION:")
     print(f"\t\tCHANGEPOINT CLASSIFICATION")
-    print(f"\t\tEW DIRECTION: {f2_cc_ew}")
-    print(f"\t\tNS DIRECTION: {f2_cc_ns}")
+    h, m, s = get_h_m_s(elapse_cc_ew)
+    print(f"\t\tEW DIRECTION: {f2_cc_ew:.4f} - Time elapsed: {h:d}h:{m:02d}m:{s:02d}s")
+    h, m, s = get_h_m_s(elapse_cc_ns)
+    print(f"\t\tNS DIRECTION: {f2_cc_ns:.4f} - Time elapsed: {h:d}h:{m:02d}m:{s:02d}s")
     print(f"\t\tFIRST SAMPLE CLASSIFICATION")
-    print(f"\t\tEW DIRECTION: {f2_fc_ew}")
-    print(f"\t\tNS DIRECTION: {f2_fc_ns}")
+    h, m, s = get_h_m_s(elapse_fc_ew)
+    print(f"\t\tEW DIRECTION: {f2_fc_ew:.4f} - Time elapsed: {h:d}h:{m:02d}m:{s:02d}s")
+    h, m, s = get_h_m_s(elapse_fc_ns)
+    print(f"\t\tNS DIRECTION: {f2_fc_ns:.4f} - Time elapsed: {h:d}h:{m:02d}m:{s:02d}s")
 
 
 # //wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/training //wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/train_label.csv //wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/test //wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/test_label.csv
@@ -170,6 +190,6 @@ if __name__ == "__main__":
     b = Path(args.train_label_path)
     c = Path(args.test_data_path) if args.test_data_path is not None else None
     d = Path(args.test_label_path) if args.test_data_path is not None else None
-    s = args.split
+    e = args.split
 
-    run_train(a, b, c, d, s)
+    run_train(a, b, c, d, e)
