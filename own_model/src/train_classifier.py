@@ -75,6 +75,7 @@ def main_CNN(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd
     base_dir = os.path.dirname(os.path.abspath(__file__))
     model_path = f"../trained_model/scaler.joblib"
     file_path = os.path.join(base_dir, model_path)
+    # this single dump of scaler currently only works because NS and EW have some features
     dump(scaler, file_path, compress=0)
 
     EW_labels = train_labels[train_labels["Direction"] == "EW"]
@@ -156,7 +157,7 @@ FEATURES_NS = [
     "True Anomaly (deg)",
     "Latitude (deg)",
     "Longitude (deg)",
-    "Altitude (m)",
+    "Altitude (m)"
     # "X (m)",
     # "Y (m)",
     # "Z (m)",
@@ -173,7 +174,7 @@ FEATURES_EW = [
     "True Anomaly (deg)",
     "Latitude (deg)",
     "Longitude (deg)",
-    "Altitude (m)",
+    "Altitude (m)"
 ]
 
 ENGINEERED_FEATURES_EW = {
@@ -186,7 +187,7 @@ ENGINEERED_FEATURES_EW = {
          "True Anomaly (deg)",
          "Latitude (deg)",
          "Longitude (deg)",
-         "Altitude (m)", ],
+         "Altitude (m)"],
 }
 ENGINEERED_FEATURES_NS = {
     ("std", lambda x: x.rolling(window=6).std()):
@@ -198,7 +199,7 @@ ENGINEERED_FEATURES_NS = {
          "True Anomaly (deg)",
          "Latitude (deg)",
          "Longitude (deg)",
-         "Altitude (m)", ],
+         "Altitude (m)"],
     # "Semimajor Axis (m)", "Latitude (deg)", "RAAN (deg)", "Inclination (deg)"
 }
 

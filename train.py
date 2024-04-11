@@ -130,6 +130,7 @@ def run_train(train_data_path: Path, train_label_path: Path, test_data_path: Pat
     print(f"\t\tNS DIRECTION: {f2_fc_ns}")
 
 
+# //wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/training //wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/train_label.csv //wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/test //wsl$/Ubuntu/home/backwelle/splid-devkit/dataset/phase_2/test_label.csv
 # trains all models and stores them in own_model/trained_model
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Train models")
