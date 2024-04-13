@@ -368,8 +368,8 @@ class LitClassifier(L.LightningModule):
         # train and val trackers
         all_train_results = self.train_tracker.compute_all()
         all_val_results = self.val_tracker.compute_all()
-        self.train_tracker.plot(val=all_train_results)
-        self.val_tracker.plot(val=all_val_results)
+        # self.train_tracker.plot(val=all_train_results)
+        # self.val_tracker.plot(val=all_val_results)
 
         # plt.show()
         self.val_metrics.reset()
