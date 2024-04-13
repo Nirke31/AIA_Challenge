@@ -35,7 +35,7 @@ def main_CNN(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd
              direction: str, first: bool):
     L.seed_everything(RANDOM_STATE, workers=True)
 
-    FEATURES = FEATURES_EW.copy() if direction == "EW" else FEATURES_NS.copy()
+    features = FEATURES_EW.copy() if direction == "EW" else FEATURES_NS.copy()
     # get window size.
     window_size = get_window_size(direction, first)
 
@@ -62,10 +62,10 @@ def main_CNN(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd
                 lambda_fnc).bfill()
             test_data[new_feature_name] = test_data.groupby(level=0, group_keys=False)[[feature]].apply(
                 lambda_fnc).bfill()
-            FEATURES.append(new_feature_name)
+            features.append(new_feature_name)
 
-    train_data = train_data[FEATURES]
-    test_data = test_data[FEATURES]
+    train_data = train_data[features]
+    test_data = test_data[features]
 
     scaler = StandardScaler()
     train_data = pd.DataFrame(scaler.fit_transform(train_data), columns=train_data.columns, index=train_data.index)
@@ -130,7 +130,7 @@ def main_CNN(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd
 
     # get actual model
     # have to (re)set size because features were added
-    SRC_SIZE = len(FEATURES)
+    SRC_SIZE = len(features)
     model = LitClassifier(window_size, SRC_SIZE, 1e-4, TGT_SIZE)
     early_stop_callback = EarlyStopping(monitor="val_MulticlassFBetaScore", mode="max", patience=40)
     checkpoint_callback = ModelCheckpoint(monitor="val_MulticlassFBetaScore",
