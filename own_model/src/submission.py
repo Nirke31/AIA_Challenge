@@ -469,7 +469,7 @@ if __name__ == "__main__":
         from own_model.src.evaluation import NodeDetectionEvaluator
 
         ground_truth = pd.read_csv("../../dataset/phase_2/test_label.csv")
-        own = pd.read_csv("../../submission/submission.csv")
+        own = pd.read_csv(TEST_PREDS_FP)
         test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
         precision, recall, f2, rmse = test.score(debug=True)
         print(f'Precision: {precision:.2f}')
