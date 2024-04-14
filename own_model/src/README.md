@@ -1,3 +1,5 @@
+# Structure
+
 This directory is quite convoluted and many files are not actively in use. This is due to lots of testing and 
 restructuring the submission model.
 
