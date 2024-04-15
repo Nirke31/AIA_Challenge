@@ -1,3 +1,4 @@
+import copy
 import math
 import os
 import warnings
@@ -135,6 +136,14 @@ def print_params(features, direction):
 
 
 def main_CP(df_train: pd.DataFrame, df_test: pd.DataFrame, df_test_labels: pd.DataFrame, direction: str):
+    # Copy input dataframe to not destroy them. Increases memory but you cant have it all I guess
+    df_train: pd.DataFrame = pd.DataFrame(data=copy.deepcopy(df_train.values),
+                                          columns=df_train.columns, index=df_train.index)
+    df_test: pd.DataFrame = pd.DataFrame(data=copy.deepcopy(df_test.values),
+                                         columns=df_test.columns, index=df_test.index)
+    df_test_labels: pd.DataFrame = pd.DataFrame(data=copy.deepcopy(df_test_labels.values),
+                                                columns=df_test_labels.columns, index=df_test_labels.index)
+
     # manually remove the change point at time index 0. We know that there is a time change, so we do not have to try
     # and predict it
     df_train.loc[df_train["TimeIndex"] == 0, "EW"] = 0

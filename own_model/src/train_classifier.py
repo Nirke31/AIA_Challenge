@@ -1,6 +1,7 @@
 import math
 import os
 from pathlib import Path
+import copy
 
 import numpy as np
 from joblib import dump
@@ -34,6 +35,16 @@ def get_window_size(direction: str, first: bool) -> int:
 def main_CNN(train_data: pd.DataFrame, train_labels: pd.DataFrame, test_data: pd.DataFrame, test_labels: pd.DataFrame,
              direction: str, first: bool):
     L.seed_everything(RANDOM_STATE, workers=True)
+
+    # copy input to not destroy the passed input dataframe. This consumes more memory but currently easy solution
+    train_data: pd.DataFrame = pd.DataFrame(data=copy.deepcopy(train_data.values),
+                                            columns=train_data.columns, index=train_data.index)
+    train_labels: pd.DataFrame = pd.DataFrame(data=copy.deepcopy(train_labels.values),
+                                              columns=train_labels.columns, index=train_labels.index)
+    test_data: pd.DataFrame = pd.DataFrame(data=copy.deepcopy(test_data.values),
+                                           columns=test_data.columns, index=test_data.index)
+    test_labels: pd.DataFrame = pd.DataFrame(data=copy.deepcopy(test_labels.values),
+                                             columns=test_labels.columns, index=test_labels.index)
 
     features = FEATURES_EW.copy() if direction == "EW" else FEATURES_NS.copy()
     # get window size.
