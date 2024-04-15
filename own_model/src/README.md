@@ -30,6 +30,11 @@ for both changepoints and first samples. Similar to _findChange.py_, the trainin
    * _TRAINED_MODEL_PATH_ points to the stored classification model with name _TRAINED_MODEL_NAME_. (Note: often used
 checkpoints instead of stored model due to overfitting, see below)
    * _FIRST_, if set to true, classifiers for beginning samples are trained, if set to false, changepoint models are trained.
+   * _WINDOW_SIZE_ has to be set for each DIRECTION and FIRST. The current window sizes are:
+     * 51 for _DIRECTION_ = EW and _FIRST_ = False
+     * 101 for _DIRECTION_ = NS and _FIRST_ = False
+     * 2101 for _DIRECTION_ = EW and _FIRST_ = True
+     * 2101 for _DIRECTION_ = NS and _FIRST_ = True
 
     Two things should be noted. First, the input data is scaled and the scaler is dumped again via joblib.dump into
 "../trained_model" with the name "scaler.joblib". This scaler is used for scaling the test data. Second, the model is
