@@ -377,8 +377,6 @@ class MyDataset(IterableDataset):
 def load_data_window_ready(data_location: Path, label_location: Path, amount: int = -1) \
         -> Tuple[pd.DataFrame, pd.DataFrame]:
     data_path = data_location.glob('*.csv')
-    label_path = label_location.glob('*.csv')
-    out_df = pd.DataFrame()  # all data
     labels = pd.read_csv(label_location)  # ObjectID,TimeIndex,Direction,Node,Type
     float_size = 'float32'
     datatypes = {"Timestamp": "str", "Eccentricity": float_size, "Semimajor Axis (m)": float_size,
