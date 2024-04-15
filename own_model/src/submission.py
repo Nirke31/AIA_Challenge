@@ -21,6 +21,7 @@ DEBUG = True
 if DEBUG:
     TRAINED_MODEL_DIR = "../trained_model/"
     TEST_DATA_DIR = "../../dataset/phase_2/test_own/"
+    TEST_LABEL_PATH = "../../dataset/phase_2/test_label_own.csv"
     TEST_PREDS_FP = "../../submission/submission.csv"
 else:
     TRAINED_MODEL_DIR = "/trained_model/"
@@ -388,7 +389,7 @@ def main():
     classifier_first_ns: LitClassifier = LitClassifier.load_from_checkpoint(
         TRAINED_MODEL_DIR + "full_0.89_NS_2101.ckpt")
     # Load scaler for LitClassifier
-    scaler: StandardScaler = load(TRAINED_MODEL_DIR + "scaler.joblib")
+    scaler: StandardScaler = load(TRAINED_MODEL_DIR + "scaler_full.joblib")
 
     # Read test dataset.
     df, rf_features_ew, rf_features_ns = load_test_data_and_preprocess(Path(TEST_DATA_DIR))
@@ -468,8 +469,8 @@ if __name__ == "__main__":
     if DEBUG:
         from baseline_submissions.evaluation import NodeDetectionEvaluator
 
-        ground_truth = pd.read_csv("../../dataset/phase_2/test_label_own.csv")
-        own = pd.read_csv("../../submission/submission.csv")
+        ground_truth = pd.read_csv(TEST_LABEL_PATH)
+        own = pd.read_csv(TEST_PREDS_FP)
         test = NodeDetectionEvaluator(ground_truth, own, tolerance=6)
         precision, recall, f2, rmse = test.score(debug=True)
         print(f'Precision: {precision:.2f}')
