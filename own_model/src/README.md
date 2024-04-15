@@ -6,6 +6,14 @@ restructuring the submission model.
 The three main files are the following:
 1. [**submission.py**](./submission.py): This file is executed for every prediction. It is the tidiest and most easy to understand file, which
 also follows the structure described in the associated paper to this submission.
+Currently, one should be able to just run it and get prediction results on the full model. Else, to use other models, 
+the file paths of the models in line 376, 377, 383, 385, 387, 389 and 391 have to be change to the model one wants to use.
+For example, to use the submission model for the EW changepoint prediction, change "state_classifier_EW_full.joblib" to
+"state_classifier_EW_xgboost.joblib". The same goes for all other models. 
+The data path for the test dataset can be changed in line 23. For example, to run the submission test, just change '/test_own/'
+to '/test/'.
+The 'TEST_LABEL_PATH' should point to the test labels and is used for evaluation in the NodeDetectionEvaluator. To run 
+the submission evaluation this path should also be adapted to the 'test_label'.
 2. [**findChange.py**](./findChange.py): This file is used for training the changepoint predicition models (both EW and NS directions).
 For training, one only has to set the global variables accordingly. 
    * _TRAIN_DATA_PATH_ and _TRAIN_LABEL_PATH_ have to point
